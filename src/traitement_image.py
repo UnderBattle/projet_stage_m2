@@ -78,7 +78,7 @@ def incruster_climatisation(mur_img, clim_img, pts_autocollant, dim_clim_mm, dim
     print("[Traitement] Incrustation en cours...")
     roi = result_img[y_offset:y_offset+nouvelle_hauteur, x_offset:x_offset+nouvelle_largeur]
 
-    # Mélange (blending)
+    # Mélange des pixels
     for c in range(0, 3):
         roi[:, :, c] = (alpha_mask * clim_rgb[:, :, c] + (1.0 - alpha_mask) * roi[:, :, c])
 

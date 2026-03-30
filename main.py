@@ -1,6 +1,5 @@
 import cv2
 import numpy as np
-import os
 from src.traitement_image import incruster_climatisation
 
 # ==========================================
