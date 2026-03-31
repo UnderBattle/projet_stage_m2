@@ -69,8 +69,56 @@ def incruster_climatisation(mur_img, clim_img, pts_autocollant, dim_clim_mm, dim
 
     # Séparation RGB et Alpha
     clim_rgb = clim_redimensionnee[:, :, 0:3]
-    alpha_mask = clim_redimensionnee[:, :, 3] / 255.0 
+    alpha_mask = clim_redimensionnee[:, :, 3] / 255.0
 
+    # ==========================================
+    # PHASE 3 : RENDU RÉALISTE (LUMIÈRE ET OMBRE ADAPTATIVE)
+    # ==========================================
+    print("[Traitement] Ajout de l'ombre portée adaptative...")
+    
+    # Paramètres de base de l'ombre
+    decalage_x = 10  # Réduit pour rapprocher l'ombre
+    decalage_y = 20  # Réduit pour rapprocher l'ombre
+    flou = 61        # On garde un flou large pour une diffusion douce
+    
+    # Préparation de la forme de l'ombre
+    padding = flou
+    masque_elargi = cv2.copyMakeBorder(alpha_mask, padding, padding, padding, padding, cv2.BORDER_CONSTANT, value=0)
+    ombre_floue = cv2.GaussianBlur(masque_elargi, (flou, flou), 0)
+    
+    # Position de l'ombre sur le mur
+    x_ombre = x_offset + decalage_x - padding
+    y_ombre = y_offset + decalage_y - padding
+
+    # Application avec intensité adaptative
+    if x_ombre >= 0 and y_ombre >= 0 and (y_ombre + ombre_floue.shape[0] < result_img.shape[0]) and (x_ombre + ombre_floue.shape[1] < result_img.shape[1]):
+        
+        # On récupère la zone du mur exacte où l'ombre va tomber
+        roi_ombre = result_img[y_ombre:y_ombre+ombre_floue.shape[0], x_ombre:x_ombre+ombre_floue.shape[1]]
+        
+        # Calcul de la luminosité
+        roi_grise = cv2.cvtColor(roi_ombre, cv2.COLOR_BGR2GRAY)
+        luminosite_moyenne = np.mean(roi_grise)
+        
+        # Base à 0.05 (5% d'opacité min) + proportionnel jusqu'à 0.25 (25% d'opacité max)
+        intensite_adaptative = 0.05 + (luminosite_moyenne / 255.0) * 0.20
+        
+        print(f"[Traitement] Luminosité du mur : {luminosite_moyenne:.1f}/255 -> Nouvelle Intensité de l'ombre : {intensite_adaptative:.2f}")
+        
+        # On applique cette intensité mathématique à notre ombre floue
+        ombre_alpha_adaptee = ombre_floue * intensite_adaptative
+        
+        # On dessine l'ombre sur le mur
+        for c in range(0, 3):
+            roi_ombre[:, :, c] = roi_ombre[:, :, c] * (1.0 - ombre_alpha_adaptee)
+            
+        result_img[y_ombre:y_ombre+ombre_floue.shape[0], x_ombre:x_ombre+ombre_floue.shape[1]] = roi_ombre
+    else:
+        print("[Traitement] Attention : L'ombre sort de l'image, elle est ignorée.")
+
+    # ==========================================
+    # PHASE 4 : INCRUSTATION FINALE
+    # ==========================================
     # Vérification des limites
     if (y_offset + nouvelle_hauteur > result_img.shape[0]) or (x_offset + nouvelle_largeur > result_img.shape[1]):
         raise ValueError("La clim dépasse de l'image du mur avec ces coordonnées ou cette taille !")
