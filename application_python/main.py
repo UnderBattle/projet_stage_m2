@@ -30,7 +30,6 @@ pts_autocollant = np.float32([[667, 116], [698, 116], [698, 169], [667, 169]])
 # EXÉCUTION DU TRAITEMENT
 # ==========================================
 try:
-    # On délègue tout le travail mathématique à notre module
     image_finale = incruster_climatisation(
         mur_img = target_wall,
         clim_img = src_unit,
