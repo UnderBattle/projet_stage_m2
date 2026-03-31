@@ -44,6 +44,7 @@ class EcranAccueil extends StatelessWidget {
       // Un petit bouton flottant en bas à droite (typique des applis mobiles)
       floatingActionButton: FloatingActionButton(
         onPressed: () {
+          // ignore: avoid_print
           print("Clic ! Bientôt, ça ouvrira l'appareil photo.");
         },
         child: const Icon(Icons.camera_alt),
