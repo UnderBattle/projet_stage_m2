@@ -10,7 +10,7 @@ TAKAO_PLUS_DIMENSION_REELLE = (270, 798, 240) # Hauteur, Largeur, Profondeur en 
 TAKAO_PLUS_IMG_BLANC = './installations/clim_takao_plus/8e74c5374539-takao-plus-blanc-face-atlantic.png'
 TAKAO_PLUS_IMG_NOIR = './installations/clim_takao_plus/baae79054b9d-takao-plus-noir-face-atlantic.png'
 TARGET_WALL = './img_test/IMG_20260401_090116.jpg'
-RESULT_PATH = "./export/resultat_echelle_ombre_autre.jpg"
+RESULT_PATH = "./export/resultat_echelle_reelle.jpg"
 
 # ==========================================
 # CHARGEMENT DES DONNÉES
@@ -24,7 +24,7 @@ if src_unit is None or target_wall is None:
     exit()
 
 # Définition des coordonnées de l'autocollant (simulation de l'IA)
-pts_autocollant = np.float32([[667, 116], [698, 116], [698, 169], [667, 169]])
+pts_autocollant = np.float32([[1129, 1128], [1208, 1128], [1206, 1288], [1128, 1287]])
 
 # ==========================================
 # EXÉCUTION DU TRAITEMENT

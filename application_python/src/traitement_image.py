@@ -55,17 +55,35 @@ def incruster_climatisation(mur_img, clim_img, pts_autocollant, dim_clim_mm, dim
     # On fait une copie de l'image du mur pour ne pas modifier l'originale
     result_img = mur_img.copy()
 
-    print("[Traitement] Effacement de l'autocollant par inpainting...")
-    mask = np.zeros(result_img.shape[:2], dtype=np.uint8)
+    print("[Traitement] Création du masque ciblé sur le vert...")
+    
+    # On crée le masque géométrique de base
+    mask_geo = np.zeros(result_img.shape[:2], dtype=np.uint8)
     pts_int = np.int32(pts_autocollant).reshape((-1, 1, 2))
-    cv2.fillPoly(mask, [pts_int], 255)
+    cv2.fillPoly(mask_geo, [pts_int], 255)
 
-    # Dilatation du masque
+    # On convertit la photo en HSV pour mieux détecter les couleurs
+    hsv_img = cv2.cvtColor(result_img, cv2.COLOR_BGR2HSV)
+
+    # On définit la fourchette de notre vert spécifique en HSV
+    # Le vert est autour de la teinte (Hue) 40 à 85 dans OpenCV
+    vert_bas = np.array([40, 50, 20])   # Tolérance basse (vert sombre/ombragé)
+    vert_haut = np.array([85, 255, 255]) # Tolérance haute (vert très éclairé)
+
+    # On crée un masque qui cible uniquement ces pixels verts dans toute l'image
+    mask_couleur = cv2.inRange(hsv_img, vert_bas, vert_haut)
+
+    # On combine les deux masques
+    # On garde les pixels qui sont verts (mask_couleur) et qui sont dans la zone (mask_geo)
+    mask_final = cv2.bitwise_and(mask_couleur, mask_geo)
+
+    # On dilate ce masque ultra-précis pour englober les bords flous
     kernel = np.ones((5, 5), np.uint8)
-    mask = cv2.dilate(mask, kernel, iterations=1)
+    mask_final = cv2.dilate(mask_final, kernel, iterations=2) # On passe à 2 pour être sûr de bien tout manger
 
-    # Inpainting
-    result_img = cv2.inpaint(result_img, mask, inpaintRadius=5, flags=cv2.INPAINT_TELEA)
+    # Inpainting avec le masque parfait
+    print("[Traitement] Effacement par inpainting...")
+    result_img = cv2.inpaint(result_img, mask_final, inpaintRadius=5, flags=cv2.INPAINT_TELEA)
 
     # Séparation RGB et Alpha
     clim_rgb = clim_redimensionnee[:, :, 0:3]
