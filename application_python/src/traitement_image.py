@@ -133,6 +133,52 @@ def incruster_climatisation(mur_img, clim_img, pts_autocollant, dim_clim_mm, dim
         result_img[y_ombre:y_ombre+ombre_floue.shape[0], x_ombre:x_ombre+ombre_floue.shape[1]] = roi_ombre
     else:
         print("[Traitement] Attention : L'ombre sort de l'image, elle est ignorée.")
+        
+    # ==========================================
+    # PHASE 3.5 : ADAPTATION DE LA COULEUR AMBIANTE ET LUMINOSITÉ
+    # ==========================================
+    print("[Traitement] Adaptation de la colorimétrie et luminosité...")
+    
+    # On vérifie d'abord que la clim ne dépasse pas du mur
+    if (y_offset + nouvelle_hauteur <= result_img.shape[0]) and (x_offset + nouvelle_largeur <= result_img.shape[1]):
+        
+        # On récupère la zone exacte du mur où sera la clim
+        roi_mur_clim = result_img[y_offset:y_offset+nouvelle_hauteur, x_offset:x_offset+nouvelle_largeur]
+        
+        # On calcule la couleur moyenne (BGR) du mur derrière la clim
+        avg_color_per_row = np.average(roi_mur_clim, axis=0)
+        avg_color_mur = np.average(avg_color_per_row, axis=0)
+        
+        # On crée un "calque" uni de cette couleur ambiante
+        calque_ambiance = np.full(clim_rgb.shape, avg_color_mur, dtype=np.uint8)
+        
+        # On mélange la clim avec ce filtre (ex: 15% de la couleur du mur, 85% de la clim d'origine)
+        # C'est ce qui "casse" le blanc pur numérique et l'intègre à la pièce
+        influence_mur = 0.15
+        clim_rgb = cv2.addWeighted(clim_rgb, 1.0 - influence_mur, calque_ambiance, influence_mur, 0)
+        
+        # On compare la vraie luminosité du mur avec la luminosité de la clim modifiée
+        roi_mur_grise = cv2.cvtColor(roi_mur_clim, cv2.COLOR_BGR2GRAY)
+        lum_mur = np.mean(roi_mur_grise)
+        
+        clim_grise = cv2.cvtColor(clim_rgb, cv2.COLOR_BGR2GRAY)
+        mask_binaire = (alpha_mask * 255).astype(np.uint8)
+        lum_clim = cv2.mean(clim_grise, mask=mask_binaire)[0]
+        
+        # Ratio mathématique direct
+        ratio_lum = lum_mur / (lum_clim + 1e-5)
+        
+        # On adoucit ce ratio (on n'applique que 40% de la différence pour ne pas griser la clim)
+        ratio_adouci = 1.0 - ((1.0 - ratio_lum) * 0.40) 
+        ratio_adouci = np.clip(ratio_adouci, 0.7, 1.1) # Garde-fou de sécurité
+        
+        print(f"[Traitement] Lumière Mur: {lum_mur:.1f}, Clim: {lum_clim:.1f} -> Ratio adouci: {ratio_adouci:.2f}")
+        
+        # Application sur le canal Valeur (Lumière) du HSV
+        clim_hsv = cv2.cvtColor(clim_rgb, cv2.COLOR_BGR2HSV).astype(np.float32)
+        clim_hsv[:, :, 2] = clim_hsv[:, :, 2] * ratio_adouci
+        clim_hsv[:, :, 2] = np.clip(clim_hsv[:, :, 2], 0, 255)
+        clim_rgb = cv2.cvtColor(clim_hsv.astype(np.uint8), cv2.COLOR_HSV2BGR)
 
     # ==========================================
     # PHASE 4 : INCRUSTATION FINALE
