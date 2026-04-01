@@ -9,7 +9,7 @@ AUTOCOLLANT_TAILLE_REELLE = (100, 50) # Hauteur, Largeur en mm
 TAKAO_PLUS_DIMENSION_REELLE = (270, 798, 240) # Hauteur, Largeur, Profondeur en mm
 TAKAO_PLUS_IMG_BLANC = './installations/clim_takao_plus/8e74c5374539-takao-plus-blanc-face-atlantic.png'
 TAKAO_PLUS_IMG_NOIR = './installations/clim_takao_plus/baae79054b9d-takao-plus-noir-face-atlantic.png'
-TARGET_WALL = './img_test/Cette-simple-astuce-de-decorateur-rendra-votre-interieur-encore-plus-beau_avec_autocollant_fictif.jpg'
+TARGET_WALL = './img_test/IMG_20260401_090116.jpg'
 RESULT_PATH = "./export/resultat_echelle_ombre_autre.jpg"
 
 # ==========================================
