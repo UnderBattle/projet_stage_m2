@@ -1,4 +1,9 @@
 {
     "python-envs.defaultEnvManager": "ms-python.python:system",
+    "java.import.exclusions": [
+        "**/application_mobile/android/**",
+        "**/application_mobile/ios/**",
+        "C:/src/flutter/**"
+    ],
     "cmake.ignoreCMakeListsMissing": true
 }
