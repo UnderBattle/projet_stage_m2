@@ -1,7 +1,7 @@
 import cv2
 import numpy as np
 
-def incruster_climatisation(mur_img, clim_img, pts_autocollant, dim_clim_mm, dim_autocollant_mm):
+def incruster_climatisation(mur_img, clim_img, pts_autocollant, dim_clim_mm, dim_autocollant_mm, position_cible=None):
     """
     Incruste une image de climatisation sur un mur à la place d'un autocollant repère.
     
@@ -46,8 +46,14 @@ def incruster_climatisation(mur_img, clim_img, pts_autocollant, dim_clim_mm, dim
     clim_redimensionnee = cv2.resize(clim_img, (nouvelle_largeur, nouvelle_hauteur), interpolation=methode_interpolation)
 
     # Point de collage final (converti en entiers)
-    x_offset = int(pt_haut_gauche[0]) 
-    y_offset = int(pt_haut_gauche[1]) 
+    if position_cible is not None:
+        x_offset = int(position_cible[0])
+        y_offset = int(position_cible[1])
+    else:
+        x_offset = int(pt_haut_gauche[0]) 
+        y_offset = int(pt_haut_gauche[1]) 
+
+    print(f"[Traitement] Positionnement de la clim en X:{x_offset}, Y:{y_offset}")
 
     # ==========================================
     # PHASE 2 : MANIPULATION D'IMAGES
@@ -94,106 +100,98 @@ def incruster_climatisation(mur_img, clim_img, pts_autocollant, dim_clim_mm, dim
     # ==========================================
     print("[Traitement] Ajout de l'ombre portée adaptative...")
     
-    # Paramètres de base de l'ombre
-    decalage_x = 10  # Réduit pour rapprocher l'ombre
-    decalage_y = 20  # Réduit pour rapprocher l'ombre
-    flou = 61        # On garde un flou large pour une diffusion douce
-    
-    # Préparation de la forme de l'ombre
+    decalage_x = 10
+    decalage_y = 20
+    flou = 61
     padding = flou
+    
     masque_elargi = cv2.copyMakeBorder(alpha_mask, padding, padding, padding, padding, cv2.BORDER_CONSTANT, value=0)
     ombre_floue = cv2.GaussianBlur(masque_elargi, (flou, flou), 0)
     
-    # Position de l'ombre sur le mur
     x_ombre = x_offset + decalage_x - padding
     y_ombre = y_offset + decalage_y - padding
 
-    # Application avec intensité adaptative
-    if x_ombre >= 0 and y_ombre >= 0 and (y_ombre + ombre_floue.shape[0] < result_img.shape[0]) and (x_ombre + ombre_floue.shape[1] < result_img.shape[1]):
+    # Calcul de l'intersection de l'ombre avec les bords de l'écran ---
+    sy1 = max(0, y_ombre)
+    sy2 = min(result_img.shape[0], y_ombre + ombre_floue.shape[0])
+    sx1 = max(0, x_ombre)
+    sx2 = min(result_img.shape[1], x_ombre + ombre_floue.shape[1])
+
+    # Si l'ombre est au moins partiellement visible à l'écran
+    if sx1 < sx2 and sy1 < sy2:
+        roi_ombre = result_img[sy1:sy2, sx1:sx2]
+        ombre_visible = ombre_floue[sy1 - y_ombre:sy2 - y_ombre, sx1 - x_ombre:sx2 - x_ombre]
         
-        # On récupère la zone du mur exacte où l'ombre va tomber
-        roi_ombre = result_img[y_ombre:y_ombre+ombre_floue.shape[0], x_ombre:x_ombre+ombre_floue.shape[1]]
-        
-        # Calcul de la luminosité
         roi_grise = cv2.cvtColor(roi_ombre, cv2.COLOR_BGR2GRAY)
         luminosite_moyenne = np.mean(roi_grise)
-        
-        # Base à 0.05 (5% d'opacité min) + proportionnel jusqu'à 0.25 (25% d'opacité max)
         intensite_adaptative = 0.05 + (luminosite_moyenne / 255.0) * 0.20
         
-        print(f"[Traitement] Luminosité du mur : {luminosite_moyenne:.1f}/255 -> Nouvelle Intensité de l'ombre : {intensite_adaptative:.2f}")
+        ombre_alpha_adaptee = ombre_visible * intensite_adaptative
         
-        # On applique cette intensité mathématique à notre ombre floue
-        ombre_alpha_adaptee = ombre_floue * intensite_adaptative
-        
-        # On dessine l'ombre sur le mur
         for c in range(0, 3):
             roi_ombre[:, :, c] = roi_ombre[:, :, c] * (1.0 - ombre_alpha_adaptee)
             
-        result_img[y_ombre:y_ombre+ombre_floue.shape[0], x_ombre:x_ombre+ombre_floue.shape[1]] = roi_ombre
-    else:
-        print("[Traitement] Attention : L'ombre sort de l'image, elle est ignorée.")
-        
+        result_img[sy1:sy2, sx1:sx2] = roi_ombre
+
     # ==========================================
-    # PHASE 3.5 : ADAPTATION DE LA COULEUR AMBIANTE ET LUMINOSITÉ
+    # PHASE 4 : LUMINOSITÉ ET INCRUSTATION DYNAMIQUE
     # ==========================================
-    print("[Traitement] Adaptation de la colorimétrie et luminosité...")
+    print("[Traitement] Incrustation dynamique (gestion des bords)...")
     
-    # On vérifie d'abord que la clim ne dépasse pas du mur
-    if (y_offset + nouvelle_hauteur <= result_img.shape[0]) and (x_offset + nouvelle_largeur <= result_img.shape[1]):
+    # Calcul de l'intersection de la CLIM avec les bords de l'écran
+    y1 = max(0, y_offset)
+    y2 = min(result_img.shape[0], y_offset + nouvelle_hauteur)
+    x1 = max(0, x_offset)
+    x2 = min(result_img.shape[1], x_offset + nouvelle_largeur)
+
+    # Si la clim est au moins partiellement visible sur l'image
+    if x1 < x2 and y1 < y2:
         
-        # On récupère la zone exacte du mur où sera la clim
-        roi_mur_clim = result_img[y_offset:y_offset+nouvelle_hauteur, x_offset:x_offset+nouvelle_largeur]
-        
-        # On calcule la couleur moyenne (BGR) du mur derrière la clim
+        # On découpe le bout de mur visible
+        roi_mur_clim = result_img[y1:y2, x1:x2]
+
+        # On calcule quelle partie de la clim on a le droit d'afficher (si elle est coupée en haut/gauche)
+        clim_y1 = y1 - y_offset
+        clim_y2 = y2 - y_offset
+        clim_x1 = x1 - x_offset
+        clim_x2 = x2 - x_offset
+
+        # On isole uniquement les pixels visibles de la clim
+        visible_clim_rgb = clim_rgb[clim_y1:clim_y2, clim_x1:clim_x2].copy()
+        visible_alpha = alpha_mask[clim_y1:clim_y2, clim_x1:clim_x2]
+
         avg_color_per_row = np.average(roi_mur_clim, axis=0)
         avg_color_mur = np.average(avg_color_per_row, axis=0)
         
-        # On crée un "calque" uni de cette couleur ambiante
-        calque_ambiance = np.full(clim_rgb.shape, avg_color_mur, dtype=np.uint8)
-        
-        # On mélange la clim avec ce filtre (ex: 15% de la couleur du mur, 85% de la clim d'origine)
-        # C'est ce qui "casse" le blanc pur numérique et l'intègre à la pièce
+        calque_ambiance = np.full(visible_clim_rgb.shape, avg_color_mur, dtype=np.uint8)
         influence_mur = 0.15
-        clim_rgb = cv2.addWeighted(clim_rgb, 1.0 - influence_mur, calque_ambiance, influence_mur, 0)
+        visible_clim_rgb = cv2.addWeighted(visible_clim_rgb, 1.0 - influence_mur, calque_ambiance, influence_mur, 0)
         
-        # On compare la vraie luminosité du mur avec la luminosité de la clim modifiée
         roi_mur_grise = cv2.cvtColor(roi_mur_clim, cv2.COLOR_BGR2GRAY)
         lum_mur = np.mean(roi_mur_grise)
         
-        clim_grise = cv2.cvtColor(clim_rgb, cv2.COLOR_BGR2GRAY)
-        mask_binaire = (alpha_mask * 255).astype(np.uint8)
-        lum_clim = cv2.mean(clim_grise, mask=mask_binaire)[0]
+        clim_grise = cv2.cvtColor(visible_clim_rgb, cv2.COLOR_BGR2GRAY)
+        mask_binaire = (visible_alpha * 255).astype(np.uint8)
         
-        # Ratio mathématique direct
+        # Sécurité : si la seule partie visible de la clim est 100% transparente (ex: le coin transparent du PNG sort de l'écran)
+        if cv2.countNonZero(mask_binaire) > 0:
+            lum_clim = cv2.mean(clim_grise, mask=mask_binaire)[0]
+        else:
+            lum_clim = lum_mur
+
         ratio_lum = lum_mur / (lum_clim + 1e-5)
-        
-        # On adoucit ce ratio (on n'applique que 40% de la différence pour ne pas griser la clim)
         ratio_adouci = 1.0 - ((1.0 - ratio_lum) * 0.40) 
-        ratio_adouci = np.clip(ratio_adouci, 0.7, 1.1) # Garde-fou de sécurité
+        ratio_adouci = np.clip(ratio_adouci, 0.7, 1.1)
         
         print(f"[Traitement] Lumière Mur: {lum_mur:.1f}, Clim: {lum_clim:.1f} -> Ratio adouci: {ratio_adouci:.2f}")
         
-        # Application sur le canal Valeur (Lumière) du HSV
-        clim_hsv = cv2.cvtColor(clim_rgb, cv2.COLOR_BGR2HSV).astype(np.float32)
-        clim_hsv[:, :, 2] = clim_hsv[:, :, 2] * ratio_adouci
-        clim_hsv[:, :, 2] = np.clip(clim_hsv[:, :, 2], 0, 255)
-        clim_rgb = cv2.cvtColor(clim_hsv.astype(np.uint8), cv2.COLOR_HSV2BGR)
+        clim_hsv = cv2.cvtColor(visible_clim_rgb, cv2.COLOR_BGR2HSV).astype(np.float32)
+        clim_hsv[:, :, 2] = np.clip(clim_hsv[:, :, 2] * ratio_adouci, 0, 255)
+        visible_clim_rgb = cv2.cvtColor(clim_hsv.astype(np.uint8), cv2.COLOR_HSV2BGR)
+        
+        for c in range(0, 3):
+            roi_mur_clim[:, :, c] = (visible_alpha * visible_clim_rgb[:, :, c] + (1.0 - visible_alpha) * roi_mur_clim[:, :, c])
 
-    # ==========================================
-    # PHASE 4 : INCRUSTATION FINALE
-    # ==========================================
-    # Vérification des limites
-    if (y_offset + nouvelle_hauteur > result_img.shape[0]) or (x_offset + nouvelle_largeur > result_img.shape[1]):
-        raise ValueError("La clim dépasse de l'image du mur avec ces coordonnées ou cette taille !")
-
-    print("[Traitement] Incrustation en cours...")
-    roi = result_img[y_offset:y_offset+nouvelle_hauteur, x_offset:x_offset+nouvelle_largeur]
-
-    # Mélange des pixels
-    for c in range(0, 3):
-        roi[:, :, c] = (alpha_mask * clim_rgb[:, :, c] + (1.0 - alpha_mask) * roi[:, :, c])
-
-    result_img[y_offset:y_offset+nouvelle_hauteur, x_offset:x_offset+nouvelle_largeur] = roi
+        result_img[y1:y2, x1:x2] = roi_mur_clim
 
     return result_img
