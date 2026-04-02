@@ -1,6 +1,17 @@
+import 'dart:io';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
+import 'package:camera/camera.dart';
 
-void main() {
+List<CameraDescription> cameras = [];
+
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  try {
+    cameras = await availableCameras();
+  } on CameraException catch (e) {
+    print('Erreur caméra : ${e.code}, ${e.description}');
+  }
   runApp(const MonApplication());
 }
 
@@ -13,14 +24,17 @@ class MonApplication extends StatelessWidget {
       title: 'Simulateur Clim',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: Colors.teal), // Un petit vert "Atlantic"
+        colorScheme: ColorScheme.fromSeed(seedColor: Colors.teal),
         useMaterial3: true,
       ),
-      home: const EcranAccueil(), 
+      home: const EcranAccueil(),
     );
   }
 }
 
+// ==========================================
+// ÉCRAN 1 : LA CAMÉRA
+// ==========================================
 class EcranAccueil extends StatefulWidget {
   const EcranAccueil({super.key});
 
@@ -29,103 +43,162 @@ class EcranAccueil extends StatefulWidget {
 }
 
 class _EcranAccueilState extends State<EcranAccueil> {
-  
-  // La "mémoire" de notre écran : quelle clim est actuellement sélectionnée ?
-  String modeleSelectionne = 'Takao Plus Blanc';
+  CameraController? _controller;
 
-  // Notre catalogue de climatisations
-  final List<String> catalogueClims = [
-    'Takao Plus Blanc',
-    'Takao Plus Noir'
-  ];
+  @override
+  void initState() {
+    super.initState();
+    if (cameras.isNotEmpty) {
+      _controller = CameraController(
+        cameras[0], 
+        ResolutionPreset.high,
+        enableAudio: false, 
+      );
+      _controller!.initialize().then((_) {
+        if (!mounted) return;
+        setState(() {});
+      }).catchError((Object e) {
+        print("Erreur initialisation caméra : $e");
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller?.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Simulation Climatisation'),
+        title: const Text('Prendre le mur en photo'),
         backgroundColor: Theme.of(context).colorScheme.inversePrimary,
       ),
-      
-      // On utilise une Column pour empiler les éléments de haut en bas
       body: Column(
         children: [
-          
-          // Le menu déroulant du catalogue
+          Expanded(
+            child: Container(
+              width: double.infinity,
+              margin: const EdgeInsets.all(16.0),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(15),
+                child: _controller != null && _controller!.value.isInitialized
+                    ? CameraPreview(_controller!)
+                    : const Center(child: CircularProgressIndicator()),
+              ),
+            ),
+          ),
+          const SizedBox(height: 80), 
+        ],
+      ),
+      floatingActionButton: FloatingActionButton.extended(
+        onPressed: () async {
+          if (_controller != null && _controller!.value.isInitialized) {
+             try {
+               final image = await _controller!.takePicture();
+               if (!context.mounted) return; 
+
+               // On ne passe plus que l'image à l'écran suivant !
+               Navigator.push(
+                 context,
+                 MaterialPageRoute(
+                   builder: (context) => EcranResultat(photo: image),
+                 ),
+               );
+             } catch (e) {
+               print("Erreur : $e");
+             }
+          }
+        },
+        label: const Text('Prendre en photo'),
+        icon: const Icon(Icons.camera),
+      ),
+      floatingActionButtonLocation: FloatingActionButtonLocation.centerFloat,
+    );
+  }
+}
+
+// ==========================================
+// ÉCRAN 2 : LE RÉSULTAT
+// ==========================================
+class EcranResultat extends StatefulWidget {
+  final XFile photo;
+
+  // On demande uniquement la photo à la création de l'écran
+  const EcranResultat({super.key, required this.photo});
+
+  @override
+  State<EcranResultat> createState() => _EcranResultatState();
+}
+
+class _EcranResultatState extends State<EcranResultat> {
+  // C'est maintenant cet écran qui gère le catalogue et le choix
+  String modeleSelectionne = 'Takao Plus Blanc';
+  final List<String> catalogueClims = ['Takao Plus Blanc', 'Takao Plus Noir'];
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Configuration du Devis'),
+        backgroundColor: Theme.of(context).colorScheme.inversePrimary,
+      ),
+      body: Column(
+        children: [
+          // Menu déroulant du catalogue
           Padding(
             padding: const EdgeInsets.all(16.0),
             child: Row(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
                 const Text('Modèle : ', style: TextStyle(fontSize: 18)),
-                const SizedBox(width: 10), // Un petit espace
-                
-                // Le widget DropdownButton (Menu déroulant)
+                const SizedBox(width: 10),
                 DropdownButton<String>(
                   value: modeleSelectionne,
                   icon: const Icon(Icons.arrow_downward),
                   elevation: 16,
                   style: const TextStyle(color: Colors.teal, fontSize: 18, fontWeight: FontWeight.bold),
                   underline: Container(height: 2, color: Colors.tealAccent),
-                  
-                  // Quand l'utilisateur clique sur un autre modèle...
                   onChanged: (String? nouveauChoix) {
-                    // setState "rafraîchit" l'écran avec la nouvelle valeur
                     setState(() {
                       modeleSelectionne = nouveauChoix!;
                     });
                   },
-                  
-                  // On transforme notre liste de texte en éléments cliquables
                   items: catalogueClims.map<DropdownMenuItem<String>>((String modele) {
-                    return DropdownMenuItem<String>(
-                      value: modele,
-                      child: Text(modele),
-                    );
+                    return DropdownMenuItem<String>(value: modele, child: Text(modele));
                   }).toList(),
                 ),
               ],
             ),
           ),
 
-          // Espace pour la photo
+          // La photo prise
           Expanded(
             child: Container(
               width: double.infinity,
               margin: const EdgeInsets.all(16.0),
-              decoration: BoxDecoration(
-                color: Colors.grey.shade200,
-                borderRadius: BorderRadius.circular(15), // Bords arrondis
-                border: Border.all(color: Colors.grey.shade400, width: 2), // Petite bordure
-              ),
-              child: const Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(Icons.image_search, size: 100, color: Colors.grey),
-                  SizedBox(height: 16),
-                  Text(
-                    "Aucune photo sélectionnée.\nAppuyez sur l'appareil photo.",
-                    textAlign: TextAlign.center,
-                    style: TextStyle(color: Colors.grey, fontSize: 16),
-                  ),
-                ],
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(15),
+                // Astuce : comme "photo" appartient au Widget parent et pas au State, 
+                // on doit utiliser "widget.photo.path" pour y accéder.
+                child: kIsWeb 
+                    ? Image.network(widget.photo.path, fit: BoxFit.cover) 
+                    : Image.file(File(widget.photo.path), fit: BoxFit.cover),
               ),
             ),
           ),
-          
-          // Un petit espace en bas pour ne pas coller au bouton
-          const SizedBox(height: 80), 
+          const SizedBox(height: 80),
         ],
       ),
-
-      // Bouton Camera
       floatingActionButton: FloatingActionButton.extended(
         onPressed: () {
-          // ignore: avoid_print
-          print("Lancement de la caméra pour incruster une $modeleSelectionne !");
+          // C'est ici que l'on appellera l'IA et le script OpenCV
+          print("Lancement de la magie pour le modèle : $modeleSelectionne");
         },
-        label: const Text('Prendre une photo'),
-        icon: const Icon(Icons.camera_alt),
+        label: const Text('Générer la simulation'),
+        icon: const Icon(Icons.auto_fix_high), 
       ),
       floatingActionButtonLocation: FloatingActionButtonLocation.centerFloat,
     );

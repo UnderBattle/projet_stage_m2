@@ -5,7 +5,6 @@ from tkinter import filedialog, ttk, messagebox
 from PIL import Image, ImageTk
 import os
 
-# Import de ton algorithme
 from src.traitement_image import incruster_climatisation
 
 # ==========================================
