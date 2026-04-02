@@ -18,7 +18,7 @@ CATALOGUE_CLIMS = {
     "Takao Plus Noir": "./installations/clim_takao_plus/baae79054b9d-takao-plus-noir-face-atlantic.png",
 }
 
-PTS_AUTOCOLLANT_DEFAUT = np.float32([[1129, 1128], [1208, 1128], [1206, 1288], [1128, 1287]]) 
+PTS_AUTOCOLLANT_DEFAUT = np.float32([[1128, 1128], [1208, 1129], [1206, 1288], [1128, 1287]]) 
 # Dimensions maximales de la fenêtre sur ton écran PC
 MAX_WIDTH = 1200
 MAX_HEIGHT = 700

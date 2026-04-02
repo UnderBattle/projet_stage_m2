@@ -33,11 +33,10 @@ class MonApplication extends StatelessWidget {
 }
 
 // ==========================================
-// ÉCRAN 1 : LA CAMÉRA
+// ÉCRAN 1 : LA CAMERA
 // ==========================================
 class EcranAccueil extends StatefulWidget {
   const EcranAccueil({super.key});
-
   @override
   State<EcranAccueil> createState() => _EcranAccueilState();
 }
@@ -195,7 +194,8 @@ class _EcranResultatState extends State<EcranResultat> {
       floatingActionButton: FloatingActionButton.extended(
         onPressed: () {
           // C'est ici que l'on appellera l'IA et le script OpenCV
-          print("Lancement de la magie pour le modèle : $modeleSelectionne");
+          // TODO : intégrer l'IA et OpenCV pour générer la simulation
+          print("Lancement de l'IA pour le modèle : $modeleSelectionne");
         },
         label: const Text('Générer la simulation'),
         icon: const Icon(Icons.auto_fix_high), 
