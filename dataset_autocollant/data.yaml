@@ -1,0 +1,19 @@
+path: C:/Users/soite/Documents/projet_stage_m2/dataset_autocollant
+
+train: ./train/images
+val: ./train/images
+# val: ./valid/images
+# test: ./test/images
+
+kpt_shape: [4, 3]
+flip_idx: [0, 1, 2, 3]
+
+nc: 1
+names: ['autocollant']
+
+roboflow:
+  workspace: underbattles-workspace
+  project: detection_autocollant
+  version: 1
+  license: CC BY 4.0
+  url: https://universe.roboflow.com/underbattles-workspace/detection_autocollant/dataset/1
