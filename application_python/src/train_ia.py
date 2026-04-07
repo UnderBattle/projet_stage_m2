@@ -1,5 +1,6 @@
 from ultralytics import YOLO
 import os
+import numpy as np
 
 if __name__ == '__main__':
     print("[IA] Chargement du modèle YOLOv8-Pose (Nano)...")
@@ -8,11 +9,21 @@ if __name__ == '__main__':
 
     print("[IA] Lancement de l'entraînement...")
     results = model.train(
-        data='../../dataset_autocollant/data.yaml',
-        epochs=150,
-        imgsz=640,
-        batch=2,
-        device='cpu'
+        data='../../dataset_autocollant/data.yaml', 
+        epochs=75,
+        imgsz=1024,      
+        batch=6,
+        device='cpu',
+        
+        # On désactive la géométrie et les transformations pour se concentrer sur l'apprentissage des points clés
+        fliplr=0.0,
+        flipud=0.0,
+        mosaic=0.0,
+        degrees=0.0,
+        
+        # Pénalité de l'absence de détection (box) et de points clés (pose)
+        pose=30.0,
+        box=5.0
     )
     
     # ==========================================
@@ -61,28 +72,54 @@ if __name__ == '__main__':
         # L'IA regarde l'image et fait sa prédiction
         predictions = best_model.predict(
             source=image_test, 
-            conf=0.5,     # On lui demande d'être sûre à au moins 50%
-            show=True,
-            save=True     # Va sauvegarder l'image résultat dans le dossier 'runs/pose/predict'
+            conf = 0.5,     # On lui demande d'être sûre à au moins 50%
+            show = False,
+            save = True     # Va sauvegarder l'image résultat dans le dossier 'runs/pose/predict'
         )
 
         # On extrait les données mathématiques de la première image analysée
         resultat_ia = predictions[0]
 
         if len(resultat_ia.boxes) > 0:
-            print("\nAutocollant détecté ! Extraction des points clés...")
+            print("\nAutocollant détecté ! Extraction des points...")
             
-            # On récupère les 4 points clés
-            # keypoints.data contient [x, y, confiance] pour chaque point
+            # On récupère les limites strictes de la boîte englobante [x_min, y_min, x_max, y_max]
+            boite = resultat_ia.boxes.xyxy[0].cpu().numpy()
+            x_min, y_min, x_max, y_max = boite
+            
             points_cles = resultat_ia.keypoints.data[0].cpu().numpy() 
             
-            print("\nVoici les 4 coordonnées à envoyer à OpenCV (traitement_image.py) :")
-            # On ne garde que les X et Y
+            # Calcul de la confiance moyenne des points clés (en %) pour évaluer la fiabilité de la prédiction
+            # La colonne 2 contient les confiances de chaque point
+            confiance_moyenne = np.mean(points_cles[:, 2]) * 100
+            
             points_finaux = []
-            for i, point in enumerate(points_cles):
-                x, y, confiance = point
-                points_finaux.append([x, y])
-                print(f" -> Point {i+1} : X={int(x)}, Y={int(y)} (Sûr à {confiance*100:.1f}%)")
+            
+            # Choix de la stratégie en fonction de la confiance moyenne des points clés
+            if confiance_moyenne >= 80.0:
+                print(f"\n[Succès] Confiance élevée ({confiance_moyenne:.1f}%). Utilisation des points de l'IA :")
+                for i, point in enumerate(points_cles):
+                    x, y, confiance = point
+
+                    # Filet de sécurité classique
+                    x_securise = np.clip(x, x_min, x_max)
+                    y_securise = np.clip(y, y_min, y_max)
+                    
+                    points_finaux.append([x_securise, y_securise])
+                    print(f" -> Point {i+1} : X={int(x_securise)}, Y={int(y_securise)} (Sûr à {confiance*100:.1f}%)")
+            else:
+                print(f"\n[Sécurité] Confiance trop faible ({confiance_moyenne:.1f}% < 80%). Utilisation des coins de la boîte :")
+                # On crée les 4 coins parfaits du rectangle de la Bounding Box
+                points_finaux = [
+                    [x_min, y_min], # Haut-Gauche
+                    [x_max, y_min], # Haut-Droit
+                    [x_max, y_max], # Bas-Droit
+                    [x_min, y_max]  # Bas-Gauche
+                ]
+                
+                noms = ["Haut-Gauche", "Haut-Droit", "Bas-Droit", "Bas-Gauche"]
+                for i, pt in enumerate(points_finaux):
+                    print(f" -> Point {i+1} ({noms[i]}) : X={int(pt[0])}, Y={int(pt[1])} (Sûr à 100% via Box)")
                 
             print("\nFormat Python pour notre script :")
             print(f"pts_ia = np.float32({points_finaux})")
