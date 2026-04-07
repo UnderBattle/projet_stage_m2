@@ -5,7 +5,7 @@ from tkinter import filedialog, ttk, messagebox
 from PIL import Image, ImageTk
 import os
 
-from src.traitement_image import incruster_climatisation
+from src.traitement_image import incruster_climatisation, detecter_autocollant_ia
 
 # ==========================================
 # CONSTANTES DU PROJET
@@ -35,6 +35,7 @@ class SimulateurApp:
         self.mur_img_cv2 = None
         self.clim_img_cv2 = None
         self.clim_resized_pil = None
+        self.pts_autocollant_actuel = PTS_AUTOCOLLANT_DEFAUT
 
         # Facteur d'échelle pour l'affichage écran
         self.ratio_affichage = 1.0
@@ -99,6 +100,15 @@ class SimulateurApp:
             return
         self.mur_img_cv2 = img
 
+        # On demande à l'IA de trouver l'autocollant
+        points_ia = detecter_autocollant_ia(img)
+
+        if points_ia is not None:
+            self.pts_autocollant_actuel = points_ia
+        else:
+            print("[Interface] IA en échec. Utilisation des points par défaut.")
+            self.pts_autocollant_actuel = PTS_AUTOCOLLANT_DEFAUT
+
         h, w = img.shape[:2]
         ratio_w = MAX_WIDTH / w
         ratio_h = MAX_HEIGHT / h
@@ -135,8 +145,11 @@ class SimulateurApp:
             return
 
         # Taille Réelle
-        pt_hg = PTS_AUTOCOLLANT_DEFAUT[0]
-        pt_hd = PTS_AUTOCOLLANT_DEFAUT[1]
+        # pt_hg = PTS_AUTOCOLLANT_DEFAUT[0]
+        # pt_hd = PTS_AUTOCOLLANT_DEFAUT[1]
+        pt_hg = self.pts_autocollant_actuel[0]
+        pt_hd = self.pts_autocollant_actuel[1]
+        
         dist_px = np.sqrt((pt_hd[0] - pt_hg[0])**2 + (pt_hd[1] - pt_hg[1])**2)
         ratio = dist_px / AUTOCOLLANT_TAILLE_REELLE[1]
 
@@ -181,7 +194,7 @@ class SimulateurApp:
             resultat = incruster_climatisation(
                 mur_img=self.mur_img_cv2,
                 clim_img=self.clim_img_cv2,
-                pts_autocollant=PTS_AUTOCOLLANT_DEFAUT,
+                pts_autocollant=self.pts_autocollant_actuel, # <-- CORRECTION ICI
                 dim_clim_mm=TAKAO_PLUS_DIMENSION_REELLE,
                 dim_autocollant_mm=AUTOCOLLANT_TAILLE_REELLE,
                 position_cible=(real_x, real_y)

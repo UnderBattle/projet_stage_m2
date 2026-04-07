@@ -1,15 +1,78 @@
 import cv2
 import numpy as np
+import os
+from ultralytics import YOLO
 
+# ==========================================
+# INTELLIGENCE ARTIFICIELLE
+# ==========================================
+def detecter_autocollant_ia(mur_img, chemin_modele="runs/pose/train4/weights/best.pt"):
+    """
+    Analyse l'image avec YOLOv8 et retourne les 4 points de l'autocollant.
+    Intègre le système de sécurité (Fallback sur la Bounding Box).
+    """
+    print("\n[IA] === RECHERCHE DE L'AUTOCOLLANT ===")
+    
+    # Vérification de l'existence du fichier du modèle
+    if not os.path.exists(chemin_modele):
+        # On tente un chemin alternatif au cas où on lance le script depuis le dossier src/
+        chemin_modele = "src/" + chemin_modele
+        if not os.path.exists(chemin_modele):
+            print(f"[IA] ERREUR : Le modèle '{chemin_modele}' est introuvable !")
+            return None
+
+    # Chargement du modèle "Cerveau"
+    model = YOLO(chemin_modele)
+
+    # Inférence : YOLO peut lire directement l'image OpenCV (mur_img)
+    predictions = model.predict(source=mur_img, conf=0.5, show=False, save=False)
+    resultat_ia = predictions[0]
+
+    if len(resultat_ia.boxes) > 0:
+        print("[IA] Autocollant détecté ! Extraction des données...")
+        
+        # On récupère la boîte englobante
+        boite = resultat_ia.boxes.xyxy[0].cpu().numpy()
+        x_min, y_min, x_max, y_max = boite
+        
+        # On récupère les points clés
+        points_cles = resultat_ia.keypoints.data[0].cpu().numpy() 
+        confiance_moyenne = np.mean(points_cles[:, 2]) * 100
+        
+        points_finaux = []
+        
+        # Filet de sécurité
+        if confiance_moyenne >= 80.0:
+            print(f"[IA] [Succès] Confiance élevée ({confiance_moyenne:.1f}%). Utilisation des points de l'IA.")
+            for point in points_cles:
+                x, y, confiance = point
+                x_securise = np.clip(x, x_min, x_max)
+                y_securise = np.clip(y, y_min, y_max)
+                points_finaux.append([x_securise, y_securise])
+        else:
+            print(f"[IA] [Sécurité] Confiance faible ({confiance_moyenne:.1f}% < 80%). Utilisation des coins de la boîte.")
+            points_finaux = [
+                [x_min, y_min],
+                [x_max, y_min],
+                [x_max, y_max],
+                [x_min, y_max]
+            ]
+            
+        return np.float32(points_finaux)
+    else:
+        print("[IA] Aucun autocollant détecté sur cette photo.")
+        return None
+
+# ==========================================
+# TRAITEMENT D'IMAGE (OPENCV)
+# ==========================================
 def incruster_climatisation(mur_img, clim_img, pts_autocollant, dim_clim_mm, dim_autocollant_mm, position_cible=None):
     # On fait une copie de l'image du mur pour ne pas modifier l'originale
     result_img = mur_img.copy()
     h_mur, w_mur = result_img.shape[:2]
     print(f"\n[Traitement] Dimensions de l'image du mur : {w_mur}x{h_mur} pixels")
 
-    # ==========================================
-    # PHASE 1 : EFFACEMENT DE L'AUTOCOLLANT
-    # ==========================================
+    # === PHASE 1 : EFFACEMENT DE L'AUTOCOLLANT ===
     print("\n[Traitement] === PHASE 1 : EFFACEMENT DE L'AUTOCOLLANT ===")
     mask_geo = np.zeros((h_mur, w_mur), dtype=np.uint8)
     pts_int = np.int32(pts_autocollant).reshape((-1, 1, 2))
@@ -28,16 +91,13 @@ def incruster_climatisation(mur_img, clim_img, pts_autocollant, dim_clim_mm, dim
     
     result_img = cv2.inpaint(result_img, mask_final, inpaintRadius=5, flags=cv2.INPAINT_TELEA)
 
-    # ==========================================
-    # PHASE 2 : CALCUL DE LA PERSPECTIVE STABILISÉE
-    # ==========================================
+    # === PHASE 2 : CALCUL DE LA PERSPECTIVE STABILISEE ===
     print("\n[Traitement] === PHASE 2 : CALCUL DE LA PERSPECTIVE STABILISEE ===")
     
     # Extraction des points d'origine
     pt_hg, pt_hd, pt_bd, pt_bg = np.float32(pts_autocollant)
     print(f"[Traitement] Points d'origine : HG:{pt_hg}, HD:{pt_hd}, BG:{pt_bg}, BD:{pt_bd}")
     
-    # Affichage du problème dans le terminal
     w_haut = np.linalg.norm(pt_hd - pt_hg)
     w_bas = np.linalg.norm(pt_bd - pt_bg)
     print(f"[Traitement] Largeur détectée -> Haut: {w_haut:.1f}px | Bas: {w_bas:.1f}px")
@@ -49,9 +109,7 @@ def incruster_climatisation(mur_img, clim_img, pts_autocollant, dim_clim_mm, dim
     dy = pt_hd[1] - pt_hg[1]
     largeur_px = np.sqrt(dx**2 + dy**2)
     angle_rad = np.arctan2(dy, dx)
-    print(f"[Traitement] Écarts (dx, dy) du bord haut : dx={dx:.2f}, dy={dy:.2f}")
     
-    # On force la hauteur en utilisant le vrai ratio physique de l'autocollant
     ratio_physique = dim_autocollant_mm[0] / dim_autocollant_mm[1]
     hauteur_px = largeur_px * ratio_physique
     
@@ -64,7 +122,6 @@ def incruster_climatisation(mur_img, clim_img, pts_autocollant, dim_clim_mm, dim
     print(f"[Traitement] Vecteur directeur Largeur (u) : [{u[0]:.2f}, {u[1]:.2f}]")
     print(f"[Traitement] Vecteur directeur Hauteur (v) : [{v[0]:.2f}, {v[1]:.2f}]")
 
-    # Construction des 4 nouveaux points lissés
     pts_dst_lisses = np.float32([
         pt_hg,           # Haut-Gauche (Point d'ancrage)
         pt_hg + u,       # Haut-Droit
@@ -110,9 +167,7 @@ def incruster_climatisation(mur_img, clim_img, pts_autocollant, dim_clim_mm, dim
     clim_rgb = clim_warped[:, :, 0:3]
     alpha_mask = clim_warped[:, :, 3] / 255.0
 
-    # ==========================================
-    # PHASE 3 : OMBRE PORTÉE EN PERSPECTIVE
-    # ==========================================
+    # === PHASE 3 : OMBRE PORTEE ===
     print("\n[Traitement] === PHASE 3 : OMBRE PORTEE ===")
     # On décale le masque alpha de la clim tordue pour faire l'ombre (dx=10, dy=20)
     M_trans = np.float32([[1, 0, 10], [0, 1, 20]])
@@ -133,9 +188,7 @@ def incruster_climatisation(mur_img, clim_img, pts_autocollant, dim_clim_mm, dim
     for c in range(3):
         result_img[:, :, c] = result_img[:, :, c] * (1.0 - ombre_alpha)
 
-    # ==========================================
-    # PHASE 4 : LUMIÈRE ET INCRUSTATION FINALE
-    # ==========================================
+    # === PHASE 4 : LUMIERE ET INCRUSTATION FINALE ===
     print("\n[Traitement] === PHASE 4 : LUMIERE ET INCRUSTATION FINALE ===")
     mask_binaire = (alpha_mask * 255).astype(np.uint8)
 
