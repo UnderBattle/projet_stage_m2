@@ -2,10 +2,10 @@ task: pose
 mode: train
 model: yolov8n-pose.pt
 data: ../../dataset_autocollant/data.yaml
-epochs: 75
+epochs: 1000
 time: null
 patience: 100
-batch: 2
+batch: 6
 imgsz: 1024
 save: true
 save_period: -1
@@ -78,10 +78,10 @@ weight_decay: 0.0005
 warmup_epochs: 3.0
 warmup_momentum: 0.8
 warmup_bias_lr: 0.1
-box: 7.5
+box: 5.0
 cls: 0.5
 dfl: 1.5
-pose: 12.0
+pose: 30.0
 kobj: 1.0
 rle: 1.0
 angle: 1.0

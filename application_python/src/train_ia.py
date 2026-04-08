@@ -10,7 +10,7 @@ if __name__ == '__main__':
     print("[IA] Lancement de l'entraînement...")
     results = model.train(
         data='../../dataset_autocollant/data.yaml', 
-        epochs=75,
+        epochs=500,
         imgsz=1024,      
         batch=6,
         device='cpu',

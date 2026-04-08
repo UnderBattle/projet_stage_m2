@@ -6,7 +6,7 @@ from ultralytics import YOLO
 # ==========================================
 # INTELLIGENCE ARTIFICIELLE
 # ==========================================
-def detecter_autocollant_ia(mur_img, chemin_modele="runs/pose/train4/weights/best.pt"):
+def detecter_autocollant_ia(mur_img, chemin_modele="runs/pose/train3/weights/best.pt"):
     """
     Analyse l'image avec YOLOv8 et retourne les 4 points de l'autocollant.
     Intègre le système de sécurité (Fallback sur la Bounding Box).
