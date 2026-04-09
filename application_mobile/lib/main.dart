@@ -1,11 +1,13 @@
 import 'dart:io';
-import 'dart:typed_data'; // NOUVEAU : Pour afficher l'image en mémoire
+import 'dart:typed_data'; 
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:camera/camera.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:tflite_flutter/tflite_flutter.dart';
 import 'package:image/image.dart' as img;
+
+import 'traitement_image.dart';
 
 List<CameraDescription> cameras = [];
 
@@ -178,8 +180,7 @@ class _EcranResultatState extends State<EcranResultat> {
   bool _isProcessing = false;
   Interpreter? _iaModel;
   
-  // NOUVEAU : On stocke l'image modifiée avec les dessins de l'IA
-  Uint8List? _imageDebugBytes; 
+  Uint8List? _imageResultatBytes; 
 
   @override
   void initState() {
@@ -195,23 +196,18 @@ class _EcranResultatState extends State<EcranResultat> {
 
   Future<void> _chargerModeleIA() async {
     try {
-      print("[IA] Chargement du modèle best.tflite...");
       _iaModel = await Interpreter.fromAsset('assets/best.tflite');
-      print("[IA] Cerveau chargé avec succès ! Prêt à analyser.");
     } catch (e) {
-      print("[IA] ERREUR FATALE : Impossible de charger l'IA : $e");
+      print("[IA] ERREUR FATALE : $e");
     }
   }
 
-  Future<void> _lancerAnalyseIA() async {
-    if (_iaModel == null) {
-      print("[IA] Le modèle n'est pas encore prêt.");
-      return;
-    }
+  Future<void> _lancerAnalyseEtIncrustation() async {
+    if (_iaModel == null) return;
 
     setState(() {
       _isProcessing = true;
-      _imageDebugBytes = null; // On réinitialise le dessin
+      _imageResultatBytes = null; 
     });
 
     try {
@@ -219,16 +215,14 @@ class _EcranResultatState extends State<EcranResultat> {
 
       final imageBytes = await File(widget.photo.path).readAsBytes();
       img.Image? originalImage = img.decodeImage(imageBytes);
-
       if (originalImage == null) throw Exception("Impossible de lire l'image.");
 
-      print("[IA] Formatage de l'image (1024x1024)...");
       img.Image resizedImage = img.copyResize(originalImage, width: 1024, height: 1024);
 
       var inputShape = _iaModel!.getInputTensor(0).shape;
       bool isNHWC = inputShape[3] == 3; 
       
-      var inputMatrix;
+      List<dynamic> inputMatrix;
       if (isNHWC) {
         inputMatrix = List.generate(1, (i) => List.generate(1024, (j) => List.generate(1024, (k) => List.generate(3, (l) => 0.0))));
         for (int y = 0; y < 1024; y++) {
@@ -258,7 +252,6 @@ class _EcranResultatState extends State<EcranResultat> {
         )
       );
 
-      print("[IA] Le cerveau réfléchit...");
       _iaModel!.run(inputMatrix, outputMatrix);
 
       double maxConfiance = 0;
@@ -275,9 +268,8 @@ class _EcranResultatState extends State<EcranResultat> {
         }
       }
 
-      print("\n[RÉSULTAT IA]");
       if (maxConfiance > 0.5) { 
-        print("Autocollant détecté avec ${(maxConfiance * 100).toStringAsFixed(1)}% de certitude !");
+        print("IA : Autocollant détecté à ${(maxConfiance * 100).toStringAsFixed(1)}%");
         
         double boxX = isTransposed ? outputMatrix[0][meilleurIndex][0] : outputMatrix[0][0][meilleurIndex];
         double boxY = isTransposed ? outputMatrix[0][meilleurIndex][1] : outputMatrix[0][1][meilleurIndex];
@@ -286,23 +278,10 @@ class _EcranResultatState extends State<EcranResultat> {
         
         double scale = (boxW < 2.0 && boxH < 2.0) ? 1024.0 : 1.0;
 
-        print("Boîte brute : X:${(boxX * scale).toStringAsFixed(1)}, Y:${(boxY * scale).toStringAsFixed(1)} | W:${(boxW * scale).toStringAsFixed(1)}, H:${(boxH * scale).toStringAsFixed(1)}");
-        
-        // Calcul des coins de la Bounding Box
-        int x1 = ((boxX * scale) - (boxW * scale) / 2).toInt();
-        int y1 = ((boxY * scale) - (boxH * scale) / 2).toInt();
-        int x2 = ((boxX * scale) + (boxW * scale) / 2).toInt();
-        int y2 = ((boxY * scale) + (boxH * scale) / 2).toInt();
+        // Extraction des points bruts
+        List<Map<String, double>> rawPoints = [];
+        double confMoyennePoints = 0;
 
-        // Dessine le rectangle Rouge sur l'image
-        img.drawRect(
-          resizedImage, 
-          x1: x1, y1: y1, x2: x2, y2: y2, 
-          color: img.ColorRgb8(255, 0, 0), // Rouge
-          thickness: 5
-        );
-
-        print("Points Clés sur l'image 1024x1024 :");
         for(int point = 0; point < 4; point++) {
            int idxX = 5 + (point * 3);
            int idxY = idxX + 1;
@@ -312,27 +291,53 @@ class _EcranResultatState extends State<EcranResultat> {
            double py = isTransposed ? outputMatrix[0][meilleurIndex][idxY] : outputMatrix[0][idxY][meilleurIndex];
            double pConf = isTransposed ? outputMatrix[0][meilleurIndex][idxConf] : outputMatrix[0][idxConf][meilleurIndex];
            
-           print(" -> Point ${point+1} : X=${(px * scale).toStringAsFixed(1)}, Y=${(py * scale).toStringAsFixed(1)} (Confiance: ${(pConf*100).toStringAsFixed(1)}%)");
-
-           // Dessine un point Vert pour chaque coin trouvé
-           img.fillCircle(
-             resizedImage, 
-             x: (px * scale).toInt(), 
-             y: (py * scale).toInt(), 
-             radius: 12, 
-             color: img.ColorRgb8(0, 255, 0) // Vert
-           );
+           confMoyennePoints += pConf;
+           rawPoints.add({'x': px * scale, 'y': py * scale});
         }
 
-        // Enregistre l'image modifiée pour l'afficher dans l'interface
-        _imageDebugBytes = img.encodeJpg(resizedImage);
+        confMoyennePoints = confMoyennePoints / 4.0;
+        List<Map<String, double>> pointsCibles = [];
+
+        // FALLBACK SÉCURITÉ : Confiance points vs Boîte
+        if (confMoyennePoints >= 0.8) {
+          print("[IA] Confiance points élevée. Tri mathématique...");
+          pointsCibles = TraitementImage.trierPoints(rawPoints);
+        } else {
+          print("[IA] Confiance points faible. Sécurité activée (Bounding Box).");
+          double xMin = (boxX * scale) - (boxW * scale) / 2;
+          double yMin = (boxY * scale) - (boxH * scale) / 2;
+          double xMax = (boxX * scale) + (boxW * scale) / 2;
+          double yMax = (boxY * scale) + (boxH * scale) / 2;
+
+          pointsCibles = [
+            {'x': xMin, 'y': yMin}, // HG
+            {'x': xMax, 'y': yMin}, // HD
+            {'x': xMax, 'y': yMax}, // BD
+            {'x': xMin, 'y': yMax}  // BG
+          ];
+        }
+
+        // --- RELAIS VERS OPENCV ---
+        String climPath = modeleSelectionne == 'Takao Plus Blanc'
+            ? 'assets/installations/clim_takao_plus/8e74c5374539-takao-plus-blanc-face-atlantic.png'
+            : 'assets/installations/clim_takao_plus/baae79054b9d-takao-plus-noir-face-atlantic.png';
+
+        Uint8List? resultImage = await TraitementImage.incrusterClimatisation(
+          photoPath: widget.photo.path,
+          climAssetPath: climPath,
+          pointsIA: pointsCibles,
+        );
+
+        if (resultImage != null) {
+          _imageResultatBytes = resultImage;
+        }
 
       } else {
-        print("Aucun autocollant trouvé (Meilleur score : ${(maxConfiance * 100).toStringAsFixed(1)}%)");
+        print("IA : Aucun autocollant trouvé !");
       }
 
     } catch (e) {
-      print("[IA] ERREUR pendant l'analyse : $e");
+      print("[IA] ERREUR : $e");
     } finally {
       setState(() {
         _isProcessing = false;
@@ -365,6 +370,7 @@ class _EcranResultatState extends State<EcranResultat> {
                   onChanged: (String? nouveauChoix) {
                     setState(() {
                       modeleSelectionne = nouveauChoix!;
+                      _imageResultatBytes = null; // Efface la simu si on change de clim
                     });
                   },
                   items: catalogueClims.map<DropdownMenuItem<String>>((String modele) {
@@ -380,23 +386,25 @@ class _EcranResultatState extends State<EcranResultat> {
               margin: const EdgeInsets.all(16.0),
               child: ClipRRect(
                 borderRadius: BorderRadius.circular(15),
-                // NOUVEAU : Logique d'affichage
                 child: _isProcessing 
                 ? const Center(child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
                       CircularProgressIndicator(),
                       SizedBox(height: 20),
-                      Text("L'IA analyse l'image...")
+                      Text("Calcul 3D et Incrustation...")
                     ],
                 ))
-                : (_imageDebugBytes != null) 
-                    // Affiche l'image de Débug avec les points et la boîte
-                    ? Image.memory(_imageDebugBytes!, fit: BoxFit.contain)
-                    // Sinon affiche l'image originale
-                    : (kIsWeb
-                        ? Image.network(widget.photo.path, fit: BoxFit.cover)
-                        : Image.file(File(widget.photo.path), fit: BoxFit.cover)),
+                : InteractiveViewer(
+                    panEnabled: true,
+                    minScale: 1.0,
+                    maxScale: 8.0,
+                    child: (_imageResultatBytes != null) 
+                        ? Image.memory(_imageResultatBytes!, fit: BoxFit.contain)
+                        : (kIsWeb
+                            ? Image.network(widget.photo.path, fit: BoxFit.contain)
+                            : Image.file(File(widget.photo.path), fit: BoxFit.contain)),
+                  ),
               ),
             ),
           ),
@@ -404,9 +412,9 @@ class _EcranResultatState extends State<EcranResultat> {
         ],
       ),
       floatingActionButton: FloatingActionButton.extended(
-        onPressed: _isProcessing ? null : _lancerAnalyseIA,
-        label: const Text("Chercher l'autocollant"),
-        icon: const Icon(Icons.search),
+        onPressed: _isProcessing ? null : _lancerAnalyseEtIncrustation,
+        label: const Text("Générer la simulation"),
+        icon: const Icon(Icons.auto_fix_high),
       ),
       floatingActionButtonLocation: FloatingActionButtonLocation.centerFloat,
     );
