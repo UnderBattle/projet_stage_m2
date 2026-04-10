@@ -123,7 +123,18 @@ class _EcranAccueilState extends State<EcranAccueil> {
               child: ClipRRect(
                 borderRadius: BorderRadius.circular(15),
                 child: _controller != null && _controller!.value.isInitialized
-                    ? CameraPreview(_controller!)
+                    ? SizedBox(
+                        width: double.infinity,
+                        height: double.infinity,
+                        child: FittedBox(
+                          fit: BoxFit.cover,
+                          child: SizedBox(
+                            width: _controller!.value.previewSize?.height ?? 1,
+                            height: _controller!.value.previewSize?.width ?? 1,
+                            child: CameraPreview(_controller!),
+                          ),
+                        ),
+                      )
                     : const Center(child: CircularProgressIndicator()),
               ),
             ),
@@ -177,7 +188,7 @@ class _EcranResultatState extends State<EcranResultat> {
   String modeleSelectionne = 'Takao Plus Blanc';
   final List<String> catalogueClims = ['Takao Plus Blanc', 'Takao Plus Noir'];
 
-  bool _isProcessing = false;
+  bool _isProcessing = true; 
   Interpreter? _iaModel;
   Uint8List? _imageResultatBytes; 
 
@@ -191,7 +202,7 @@ class _EcranResultatState extends State<EcranResultat> {
   @override
   void initState() {
     super.initState();
-    _chargerModeleIA();
+    _lancerProcessusAutomatique();
   }
 
   @override
@@ -200,27 +211,21 @@ class _EcranResultatState extends State<EcranResultat> {
     super.dispose();
   }
 
-  Future<void> _chargerModeleIA() async {
+  Future<void> _lancerProcessusAutomatique() async {
     try {
       _iaModel = await Interpreter.fromAsset('assets/best.tflite');
+      await _analyserImage();
     } catch (e) {
-      print("[IA] ERREUR FATALE : $e");
+      print("[IA] ERREUR FATALE AU DÉMARRAGE : $e");
+      setState(() => _isProcessing = false);
     }
   }
 
   Future<void> _analyserImage() async {
     if (_iaModel == null) return;
 
-    setState(() {
-      _isProcessing = true;
-      _imageResultatBytes = null; 
-      _pointsCibles = null;
-      _decalageX = 0.0;
-      _decalageY = 0.0;
-    });
-
     try {
-      print("\n[IA] === DÉBUT DE L'ANALYSE ===");
+      print("\n[IA] === DÉBUT DE L'ANALYSE AUTOMATIQUE ===");
 
       final imageBytes = await File(widget.photo.path).readAsBytes();
       img.Image? originalImage = img.decodeImage(imageBytes);
@@ -232,7 +237,7 @@ class _EcranResultatState extends State<EcranResultat> {
       img.Image resizedImage = img.copyResize(originalImage, width: 1024, height: 1024);
 
       var inputShape = _iaModel!.getInputTensor(0).shape;
-      bool isNHWC = inputShape[3] == 3; 
+      bool isNHWC = inputShape[3] == 3;
       
       List<dynamic> inputMatrix;
       if (isNHWC) {
@@ -281,7 +286,7 @@ class _EcranResultatState extends State<EcranResultat> {
       }
 
       if (maxConfiance > 0.5) { 
-        print("✅ IA : Autocollant détecté à ${(maxConfiance * 100).toStringAsFixed(1)}%");
+        print("IA : Autocollant détecté à ${(maxConfiance * 100).toStringAsFixed(1)}%");
         
         double boxX = isTransposed ? outputMatrix[0][meilleurIndex][0] : outputMatrix[0][0][meilleurIndex];
         double boxY = isTransposed ? outputMatrix[0][meilleurIndex][1] : outputMatrix[0][1][meilleurIndex];
@@ -317,23 +322,29 @@ class _EcranResultatState extends State<EcranResultat> {
           double yMax = (boxY * scale) + (boxH * scale) / 2;
 
           _pointsCibles = [
-            {'x': xMin, 'y': yMin}, 
-            {'x': xMax, 'y': yMin}, 
-            {'x': xMax, 'y': yMax}, 
-            {'x': xMin, 'y': yMax}  
+            {'x': xMin, 'y': yMin},
+            {'x': xMax, 'y': yMin},
+            {'x': xMax, 'y': yMax},
+            {'x': xMin, 'y': yMax} 
           ];
         }
 
         await _genererIncrustation();
 
       } else {
-        print("❌ IA : Aucun autocollant trouvé !");
-        setState(() => _isProcessing = false);
+        print("IA : Aucun autocollant trouvé !");
+        setState(() {
+          _pointsCibles = null; 
+          _isProcessing = false;
+        });
       }
 
     } catch (e) {
       print("[IA] ERREUR : $e");
-      setState(() => _isProcessing = false);
+      setState(() {
+        _pointsCibles = null;
+        _isProcessing = false;
+      });
     } 
   }
 
@@ -346,6 +357,9 @@ class _EcranResultatState extends State<EcranResultat> {
       String climPath = modeleSelectionne == 'Takao Plus Blanc'
           ? 'assets/installations/clim_takao_plus/8e74c5374539-takao-plus-blanc-face-atlantic.png'
           : 'assets/installations/clim_takao_plus/baae79054b9d-takao-plus-noir-face-atlantic.png';
+      
+      final ByteData data = await DefaultAssetBundle.of(context).load(climPath);
+      Uint8List climBytes = data.buffer.asUint8List();
 
       Uint8List? resultImage = await TraitementImage.incrusterClimatisation(
         photoPath: widget.photo.path,
@@ -353,6 +367,7 @@ class _EcranResultatState extends State<EcranResultat> {
         pointsIA: _pointsCibles!,
         decalageX: _decalageX, 
         decalageY: _decalageY, 
+        climBytes: climBytes, 
       );
 
       if (resultImage != null) {
@@ -371,7 +386,7 @@ class _EcranResultatState extends State<EcranResultat> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Configuration du Devis'),
+        title: const Text('Incrustation de la climatisation'),
         backgroundColor: Theme.of(context).colorScheme.inversePrimary,
       ),
       body: Column(
@@ -411,7 +426,6 @@ class _EcranResultatState extends State<EcranResultat> {
               margin: const EdgeInsets.all(16.0),
               child: ClipRRect(
                 borderRadius: BorderRadius.circular(15),
-                // L'INTERACTIVE VIEWER EST TOUJOURS ACTIF POUR LE ZOOM ET LE PAN !
                 child: InteractiveViewer(
                     panEnabled: true,
                     scaleEnabled: true,
@@ -419,10 +433,45 @@ class _EcranResultatState extends State<EcranResultat> {
                     maxScale: 8.0,
                     child: LayoutBuilder(
                       builder: (context, constraints) {
+                        
                         if (_imageWidth == null || _imageHeight == null) {
                            return _isProcessing 
                               ? const Center(child: CircularProgressIndicator()) 
                               : Image.file(File(widget.photo.path), fit: BoxFit.contain);
+                        }
+
+                        if (_pointsCibles == null) {
+                           return Stack(
+                             children: [
+                               Positioned.fill(
+                                 child: Image.file(File(widget.photo.path), fit: BoxFit.contain),
+                               ),
+                               if (!_isProcessing)
+                                 Center(
+                                   child: Container(
+                                     padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 15),
+                                     decoration: BoxDecoration(
+                                       color: Colors.teal.withValues(alpha: 0.8),
+                                       borderRadius: BorderRadius.circular(12),
+                                     ),
+                                     child: const Column(
+                                       mainAxisSize: MainAxisSize.min,
+                                       children: [
+                                         Icon(Icons.error_outline, color: Colors.redAccent, size: 40),
+                                         SizedBox(height: 10),
+                                         Text(
+                                           "Aucun autocollant détecté sur la photo",
+                                           style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
+                                           textAlign: TextAlign.center,
+                                         ),
+                                       ],
+                                     ),
+                                   ),
+                                 ),
+                               if (_isProcessing)
+                                 const Center(child: CircularProgressIndicator()),
+                             ],
+                           );
                         }
 
                         double viewW = constraints.maxWidth;
@@ -460,49 +509,43 @@ class _EcranResultatState extends State<EcranResultat> {
 
                         return Stack(
                           children: [
-                            // 1. LE FOND
                             Positioned.fill(
                               child: _isDragging || _imageResultatBytes == null
                                   ? Image.file(File(widget.photo.path), fit: BoxFit.contain)
                                   : Image.memory(_imageResultatBytes!, fit: BoxFit.contain),
                             ),
 
-                            // 2. LA CLIM "FANTÔME" & DÉTECTEUR DE TOUCHER
-                            if (_pointsCibles != null)
-                              Positioned(
-                                left: climScreenX,
-                                top: climScreenY,
-                                width: climScreenW,
-                                height: climScreenH,
-                                // Ce GestureDetector n'intercepte QUE si on touche la clim !
-                                child: GestureDetector(
-                                  behavior: HitTestBehavior.translucent, // Pour capter même si transparent
-                                  onPanStart: (details) {
-                                     setState(() => _isDragging = true);
-                                  },
-                                  onPanUpdate: (details) {
-                                     setState(() {
-                                       _decalageX += details.delta.dx / scale;
-                                       _decalageY += details.delta.dy / scale;
-                                     });
-                                  },
-                                  onPanEnd: (details) {
-                                     setState(() => _isDragging = false);
-                                     _genererIncrustation(); 
-                                  },
-                                  child: Transform.rotate(
-                                    angle: angleRad,
-                                    alignment: Alignment.topLeft, 
-                                    child: Opacity(
-                                      // Transparent (0.0) au repos, 0.65 quand on déplace
-                                      opacity: _isDragging ? 0.65 : 0.0, 
-                                      child: Image.asset(climPath, fit: BoxFit.fill),
-                                    ),
+                            Positioned(
+                              left: climScreenX,
+                              top: climScreenY,
+                              width: climScreenW,
+                              height: climScreenH,
+                              child: GestureDetector(
+                                behavior: HitTestBehavior.translucent, 
+                                onPanStart: (details) {
+                                   setState(() => _isDragging = true);
+                                },
+                                onPanUpdate: (details) {
+                                   setState(() {
+                                     _decalageX += details.delta.dx / scale;
+                                     _decalageY += details.delta.dy / scale;
+                                   });
+                                },
+                                onPanEnd: (details) {
+                                   setState(() => _isDragging = false);
+                                   _genererIncrustation(); 
+                                },
+                                child: Transform.rotate(
+                                  angle: angleRad,
+                                  alignment: Alignment.topLeft, 
+                                  child: Opacity(
+                                    opacity: _isDragging ? 0.65 : 0.0, 
+                                    child: Image.asset(climPath, fit: BoxFit.fill),
                                   ),
                                 ),
                               ),
+                            ),
 
-                            // 3. CHARGEMENT
                             if (_isProcessing && !_isDragging && _imageResultatBytes != null)
                               Positioned.fill(
                                 child: Container(
@@ -523,12 +566,6 @@ class _EcranResultatState extends State<EcranResultat> {
           const SizedBox(height: 80),
         ],
       ),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: _isProcessing ? null : _analyserImage,
-        label: const Text("Analyser l'image"),
-        icon: const Icon(Icons.auto_fix_high),
-      ),
-      floatingActionButtonLocation: FloatingActionButtonLocation.centerFloat,
     );
   }
 }

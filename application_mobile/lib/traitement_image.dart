@@ -1,6 +1,5 @@
 import 'dart:typed_data';
 import 'dart:math' as math;
-import 'package:flutter/services.dart' show rootBundle;
 import 'package:opencv_dart/opencv_dart.dart' as cv;
 
 class TraitementImage {
@@ -22,18 +21,16 @@ class TraitementImage {
   }
 
   // ==========================================
-  // 2. LE TRAITEMENT D'IMAGE (PORTAGE PYTHON COMPLET)
+  // 2. LE TRAITEMENT D'IMAGE OPTIMISÉ
   // ==========================================
   static Future<Uint8List?> incrusterClimatisation({
     required String photoPath,
-    required String climAssetPath,
+    required Uint8List climBytes, // OPTIMISATION : Les octets sont déjà en RAM !
     required List<Map<String, double>> pointsIA,
     double decalageX = 0.0,
-    double decalageY = 0.0,
+    double decalageY = 0.0, required String climAssetPath,
   }) async {
     try {
-      print("\n[OpenCV] === DÉBUT DU TRAITEMENT D'IMAGE AVANCÉ ===");
-
       // --- LECTURE DE L'IMAGE MURALE ---
       cv.Mat murMat = cv.imread(photoPath, flags: cv.IMREAD_COLOR);
       int wMur = murMat.cols;
@@ -46,34 +43,24 @@ class TraitementImage {
         return cv.Point((pt['x']! * ratioX).toInt(), (pt['y']! * ratioY).toInt());
       }).toList();
 
-      // ==========================================
-      // PHASE 1 : INPAINTING MAISON (FLOU DE DIFFUSION)
-      // ==========================================
-      print("[OpenCV] Phase 1 : Inpainting Maison (Effacement invisible)...");
-      
-      // 1. Masque géométrique de l'autocollant
+      // === PHASE 1 : INPAINTING MAISON (FLOU DE DIFFUSION) ===
       cv.Mat maskGeo = cv.Mat.zeros(hMur, wMur, cv.MatType.CV_8UC1);
       cv.fillPoly(maskGeo, cv.VecVecPoint.fromList([ptsOri]), cv.Scalar.all(255));
 
-      // 2. Bague autour de l'autocollant pour capter la couleur moyenne
       cv.Mat kernelDilate = cv.Mat.ones(15, 15, cv.MatType.CV_8UC1);
       cv.Mat maskMurExt = cv.dilate(maskGeo, kernelDilate, iterations: 1);
       cv.Mat maskBagueMur = cv.subtract(maskMurExt, maskGeo);
 
       cv.Scalar couleurMoyenneMur = cv.mean(murMat, mask: maskBagueMur);
       
-      // 3. Remplissage brut (Bords nets)
       cv.Mat murBase = murMat.clone();
       cv.fillPoly(murBase, cv.VecVecPoint.fromList([ptsOri]), couleurMoyenneMur);
 
-      // 4. Création du gradient de diffusion (Flou très fort)
       cv.Mat murFlou = cv.gaussianBlur(murBase, (81, 81), 0.0);
 
-      // 5. Masque de transition doux (Feather)
-      cv.Mat maskTransition = cv.dilate(maskGeo, kernelDilate, iterations: 2); // Déborde un peu
+      cv.Mat maskTransition = cv.dilate(maskGeo, kernelDilate, iterations: 2); 
       cv.Mat maskFeather8u = cv.gaussianBlur(maskTransition, (51, 51), 0.0);
 
-      // 6. Préparation pour le mélange Alpha
       cv.Mat maskFeather3c = cv.cvtColor(maskFeather8u, cv.COLOR_GRAY2BGR);
       cv.Mat maskFeatherF = maskFeather3c.convertTo(cv.MatType.CV_32FC3, alpha: 1.0 / 255.0);
 
@@ -84,18 +71,13 @@ class TraitementImage {
       cv.Mat murBaseF = murBase.convertTo(cv.MatType.CV_32FC3);
       cv.Mat murFlouF = murFlou.convertTo(cv.MatType.CV_32FC3);
 
-      // 7. Fusion magique (Le dégradé à l'intérieur, le mur net à l'extérieur)
       cv.Mat fgInpaint = cv.multiply(murFlouF, maskFeatherF);
       cv.Mat bgInpaint = cv.multiply(murBaseF, invMaskFeatherF);
       
       cv.Mat resultImgF = cv.add(fgInpaint, bgInpaint);
       cv.Mat resultImg = resultImgF.convertTo(cv.MatType.CV_8UC3);
 
-
-      // ==========================================
-      // PHASE 2 : CALCUL DE LA PERSPECTIVE STABILISEE
-      // ==========================================
-      print("[OpenCV] Phase 2 : Trigonométrie et Lissage...");
+      // === PHASE 2 : CALCUL DE LA PERSPECTIVE STABILISEE ===
       cv.Point ptHg = ptsOri[0];
       cv.Point ptHd = ptsOri[1];
 
@@ -121,12 +103,8 @@ class TraitementImage {
         cv.Point((ptHg.x + vx + decalageX).toInt(), (ptHg.y + vy + decalageY).toInt())
       ];
 
-      // ==========================================
-      // PHASE 3 : TAILLE RÉELLE ET DÉFORMATION 3D
-      // ==========================================
-      print("[OpenCV] Phase 3 : Calcul Homographie à taille réelle...");
-      ByteData climData = await rootBundle.load(climAssetPath);
-      Uint8List climBytes = climData.buffer.asUint8List();
+      // === PHASE 3 : TAILLE RÉELLE ET DÉFORMATION 3D ===
+      // OPTIMISATION : L'image est lue instantanément depuis la RAM
       cv.Mat climMat = cv.imdecode(climBytes, cv.IMREAD_UNCHANGED);
 
       double hClimMm = 270.0; 
@@ -154,11 +132,7 @@ class TraitementImage {
       cv.Mat climBgr = cv.cvtColor(climWarped, cv.COLOR_BGRA2BGR);
       cv.Mat maskBinaire = cv.threshold(alphaMask, 5, 255, cv.THRESH_BINARY).$2;
 
-
-      // ==========================================
-      // PHASE 4 : L'OMBRE PORTÉE RÉALISTE
-      // ==========================================
-      print("[OpenCV] Phase 4 : Génération de l'ombre portée multiplicative...");
+      // === PHASE 4 : L'OMBRE PORTÉE RÉALISTE ===
       List<cv.Point> ptsDstOmbre = ptsDstLisses.map((pt) => cv.Point(pt.x + 10, pt.y + 20)).toList();
       cv.Mat hMatrixOmbre = cv.getPerspectiveTransform(vecPtsSrc, cv.VecPoint.fromList(ptsDstOmbre));
       cv.Mat climWarpedOmbre = cv.warpPerspective(climMat, hMatrixOmbre, (wMur, hMur));
@@ -180,11 +154,7 @@ class TraitementImage {
       
       cv.Mat murOmbre = murOmbreF.convertTo(cv.MatType.CV_8UC3);
 
-
-      // ==========================================
-      // PHASE 5 : LUMIÈRE ET COLOR CAST (Ambiance)
-      // ==========================================
-      print("[OpenCV] Phase 5 : Traitement de la lumière et de l'ambiance...");
+      // === PHASE 5 : LUMIÈRE ET COLOR CAST (Ambiance) ===
       cv.Scalar meanMurSousClim = cv.mean(murOmbre, mask: maskBinaire);
       cv.Scalar meanGrayMurSousClim = cv.mean(grayMur, mask: maskBinaire);
       double lumMurSousClim = meanGrayMurSousClim.val[0];
@@ -207,12 +177,7 @@ class TraitementImage {
       cv.Mat climHsvFinal = cv.merge(hsvChannels);
       cv.Mat climRgbFinal = cv.cvtColor(climHsvFinal, cv.COLOR_HSV2BGR);
 
-
-      // ==========================================
-      // PHASE 6 : FUSION ALPHA BLENDING
-      // ==========================================
-      print("[OpenCV] Phase 6 : Alpha Blending (Contours ultra-lisses)...");
-      
+      // === PHASE 6 : FUSION ALPHA BLENDING ===
       cv.Mat alpha3_8u = cv.cvtColor(alphaMask, cv.COLOR_GRAY2BGR);
       cv.Mat invAlpha3_8u = cv.bitwiseNOT(alpha3_8u);
 
@@ -228,9 +193,8 @@ class TraitementImage {
       cv.Mat resultF = cv.add(fgBlended, bgBlended);
       cv.Mat resultatFinal = resultF.convertTo(cv.MatType.CV_8UC3);
 
-      // --- EXPORT ---
+      // EXPORT
       var encodeResult = cv.imencode('.jpg', resultatFinal);
-      print("[OpenCV] === TERMINÉ AVEC SUCCÈS ===");
       return encodeResult.$2;
 
     } catch (e) {
