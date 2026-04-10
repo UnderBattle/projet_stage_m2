@@ -1,6 +1,6 @@
 import 'dart:io';
 import 'dart:typed_data'; 
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'dart:math' as math; 
 import 'package:flutter/material.dart';
 import 'package:camera/camera.dart';
 import 'package:image_picker/image_picker.dart';
@@ -163,7 +163,7 @@ class _EcranAccueilState extends State<EcranAccueil> {
 }
 
 // ==========================================
-// ÉCRAN 2 : LE RÉSULTAT ET L'IA
+// ÉCRAN 2 : LE RÉSULTAT, L'IA ET OPENCV
 // ==========================================
 class EcranResultat extends StatefulWidget {
   final XFile photo;
@@ -179,8 +179,14 @@ class _EcranResultatState extends State<EcranResultat> {
 
   bool _isProcessing = false;
   Interpreter? _iaModel;
-  
   Uint8List? _imageResultatBytes; 
+
+  int? _imageWidth;
+  int? _imageHeight;
+  List<Map<String, double>>? _pointsCibles; 
+  double _decalageX = 0.0; 
+  double _decalageY = 0.0; 
+  bool _isDragging = false; 
 
   @override
   void initState() {
@@ -202,12 +208,15 @@ class _EcranResultatState extends State<EcranResultat> {
     }
   }
 
-  Future<void> _lancerAnalyseEtIncrustation() async {
+  Future<void> _analyserImage() async {
     if (_iaModel == null) return;
 
     setState(() {
       _isProcessing = true;
       _imageResultatBytes = null; 
+      _pointsCibles = null;
+      _decalageX = 0.0;
+      _decalageY = 0.0;
     });
 
     try {
@@ -216,6 +225,9 @@ class _EcranResultatState extends State<EcranResultat> {
       final imageBytes = await File(widget.photo.path).readAsBytes();
       img.Image? originalImage = img.decodeImage(imageBytes);
       if (originalImage == null) throw Exception("Impossible de lire l'image.");
+
+      _imageWidth = originalImage.width;
+      _imageHeight = originalImage.height;
 
       img.Image resizedImage = img.copyResize(originalImage, width: 1024, height: 1024);
 
@@ -269,7 +281,7 @@ class _EcranResultatState extends State<EcranResultat> {
       }
 
       if (maxConfiance > 0.5) { 
-        print("IA : Autocollant détecté à ${(maxConfiance * 100).toStringAsFixed(1)}%");
+        print("✅ IA : Autocollant détecté à ${(maxConfiance * 100).toStringAsFixed(1)}%");
         
         double boxX = isTransposed ? outputMatrix[0][meilleurIndex][0] : outputMatrix[0][0][meilleurIndex];
         double boxY = isTransposed ? outputMatrix[0][meilleurIndex][1] : outputMatrix[0][1][meilleurIndex];
@@ -278,7 +290,6 @@ class _EcranResultatState extends State<EcranResultat> {
         
         double scale = (boxW < 2.0 && boxH < 2.0) ? 1024.0 : 1.0;
 
-        // Extraction des points bruts
         List<Map<String, double>> rawPoints = [];
         double confMoyennePoints = 0;
 
@@ -296,52 +307,63 @@ class _EcranResultatState extends State<EcranResultat> {
         }
 
         confMoyennePoints = confMoyennePoints / 4.0;
-        List<Map<String, double>> pointsCibles = [];
 
-        // FALLBACK SÉCURITÉ : Confiance points vs Boîte
         if (confMoyennePoints >= 0.8) {
-          print("[IA] Confiance points élevée. Tri mathématique...");
-          pointsCibles = TraitementImage.trierPoints(rawPoints);
+          _pointsCibles = TraitementImage.trierPoints(rawPoints);
         } else {
-          print("[IA] Confiance points faible. Sécurité activée (Bounding Box).");
           double xMin = (boxX * scale) - (boxW * scale) / 2;
           double yMin = (boxY * scale) - (boxH * scale) / 2;
           double xMax = (boxX * scale) + (boxW * scale) / 2;
           double yMax = (boxY * scale) + (boxH * scale) / 2;
 
-          pointsCibles = [
-            {'x': xMin, 'y': yMin}, // HG
-            {'x': xMax, 'y': yMin}, // HD
-            {'x': xMax, 'y': yMax}, // BD
-            {'x': xMin, 'y': yMax}  // BG
+          _pointsCibles = [
+            {'x': xMin, 'y': yMin}, 
+            {'x': xMax, 'y': yMin}, 
+            {'x': xMax, 'y': yMax}, 
+            {'x': xMin, 'y': yMax}  
           ];
         }
 
-        // --- RELAIS VERS OPENCV ---
-        String climPath = modeleSelectionne == 'Takao Plus Blanc'
-            ? 'assets/installations/clim_takao_plus/8e74c5374539-takao-plus-blanc-face-atlantic.png'
-            : 'assets/installations/clim_takao_plus/baae79054b9d-takao-plus-noir-face-atlantic.png';
-
-        Uint8List? resultImage = await TraitementImage.incrusterClimatisation(
-          photoPath: widget.photo.path,
-          climAssetPath: climPath,
-          pointsIA: pointsCibles,
-        );
-
-        if (resultImage != null) {
-          _imageResultatBytes = resultImage;
-        }
+        await _genererIncrustation();
 
       } else {
-        print("IA : Aucun autocollant trouvé !");
+        print("❌ IA : Aucun autocollant trouvé !");
+        setState(() => _isProcessing = false);
       }
 
     } catch (e) {
       print("[IA] ERREUR : $e");
+      setState(() => _isProcessing = false);
+    } 
+  }
+
+  Future<void> _genererIncrustation() async {
+    if (_pointsCibles == null) return;
+    
+    setState(() => _isProcessing = true);
+
+    try {
+      String climPath = modeleSelectionne == 'Takao Plus Blanc'
+          ? 'assets/installations/clim_takao_plus/8e74c5374539-takao-plus-blanc-face-atlantic.png'
+          : 'assets/installations/clim_takao_plus/baae79054b9d-takao-plus-noir-face-atlantic.png';
+
+      Uint8List? resultImage = await TraitementImage.incrusterClimatisation(
+        photoPath: widget.photo.path,
+        climAssetPath: climPath,
+        pointsIA: _pointsCibles!,
+        decalageX: _decalageX, 
+        decalageY: _decalageY, 
+      );
+
+      if (resultImage != null) {
+        setState(() {
+          _imageResultatBytes = resultImage;
+        });
+      }
+    } catch (e) {
+      print("[Incrustation] ERREUR : $e");
     } finally {
-      setState(() {
-        _isProcessing = false;
-      });
+      setState(() => _isProcessing = false);
     }
   }
 
@@ -370,7 +392,9 @@ class _EcranResultatState extends State<EcranResultat> {
                   onChanged: (String? nouveauChoix) {
                     setState(() {
                       modeleSelectionne = nouveauChoix!;
-                      _imageResultatBytes = null; // Efface la simu si on change de clim
+                      if (_pointsCibles != null) {
+                         _genererIncrustation();
+                      }
                     });
                   },
                   items: catalogueClims.map<DropdownMenuItem<String>>((String modele) {
@@ -380,30 +404,118 @@ class _EcranResultatState extends State<EcranResultat> {
               ],
             ),
           ),
+
           Expanded(
             child: Container(
               width: double.infinity,
               margin: const EdgeInsets.all(16.0),
               child: ClipRRect(
                 borderRadius: BorderRadius.circular(15),
-                child: _isProcessing 
-                ? const Center(child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      CircularProgressIndicator(),
-                      SizedBox(height: 20),
-                      Text("Calcul 3D et Incrustation...")
-                    ],
-                ))
-                : InteractiveViewer(
+                // L'INTERACTIVE VIEWER EST TOUJOURS ACTIF POUR LE ZOOM ET LE PAN !
+                child: InteractiveViewer(
                     panEnabled: true,
+                    scaleEnabled: true,
                     minScale: 1.0,
                     maxScale: 8.0,
-                    child: (_imageResultatBytes != null) 
-                        ? Image.memory(_imageResultatBytes!, fit: BoxFit.contain)
-                        : (kIsWeb
-                            ? Image.network(widget.photo.path, fit: BoxFit.contain)
-                            : Image.file(File(widget.photo.path), fit: BoxFit.contain)),
+                    child: LayoutBuilder(
+                      builder: (context, constraints) {
+                        if (_imageWidth == null || _imageHeight == null) {
+                           return _isProcessing 
+                              ? const Center(child: CircularProgressIndicator()) 
+                              : Image.file(File(widget.photo.path), fit: BoxFit.contain);
+                        }
+
+                        double viewW = constraints.maxWidth;
+                        double viewH = constraints.maxHeight;
+                        double scale = math.min(viewW / _imageWidth!, viewH / _imageHeight!);
+                        
+                        double displayW = _imageWidth! * scale;
+                        double displayH = _imageHeight! * scale;
+                        double offsetX = (viewW - displayW) / 2;
+                        double offsetY = (viewH - displayH) / 2;
+
+                        double ptHgXOrig = _pointsCibles![0]['x']! * (_imageWidth! / 1024.0);
+                        double ptHgYOrig = _pointsCibles![0]['y']! * (_imageHeight! / 1024.0);
+                        double ptHdXOrig = _pointsCibles![1]['x']! * (_imageWidth! / 1024.0);
+                        double ptHdYOrig = _pointsCibles![1]['y']! * (_imageHeight! / 1024.0);
+
+                        double dx = ptHdXOrig - ptHgXOrig;
+                        double dy = ptHdYOrig - ptHgYOrig;
+                        double autoWPxOrig = math.sqrt(dx * dx + dy * dy);
+                        
+                        double climWPxOrig = (798.0 / 50.0) * autoWPxOrig; 
+                        double climHPxOrig = climWPxOrig * (270.0 / 798.0);
+
+                        double climScreenW = climWPxOrig * scale;
+                        double climScreenH = climHPxOrig * scale;
+                        
+                        double climScreenX = (ptHgXOrig + _decalageX) * scale + offsetX;
+                        double climScreenY = (ptHgYOrig + _decalageY) * scale + offsetY;
+
+                        double angleRad = math.atan2(dy, dx);
+
+                        String climPath = modeleSelectionne == 'Takao Plus Blanc'
+                          ? 'assets/installations/clim_takao_plus/8e74c5374539-takao-plus-blanc-face-atlantic.png'
+                          : 'assets/installations/clim_takao_plus/baae79054b9d-takao-plus-noir-face-atlantic.png';
+
+                        return Stack(
+                          children: [
+                            // 1. LE FOND
+                            Positioned.fill(
+                              child: _isDragging || _imageResultatBytes == null
+                                  ? Image.file(File(widget.photo.path), fit: BoxFit.contain)
+                                  : Image.memory(_imageResultatBytes!, fit: BoxFit.contain),
+                            ),
+
+                            // 2. LA CLIM "FANTÔME" & DÉTECTEUR DE TOUCHER
+                            if (_pointsCibles != null)
+                              Positioned(
+                                left: climScreenX,
+                                top: climScreenY,
+                                width: climScreenW,
+                                height: climScreenH,
+                                // Ce GestureDetector n'intercepte QUE si on touche la clim !
+                                child: GestureDetector(
+                                  behavior: HitTestBehavior.translucent, // Pour capter même si transparent
+                                  onPanStart: (details) {
+                                     setState(() => _isDragging = true);
+                                  },
+                                  onPanUpdate: (details) {
+                                     setState(() {
+                                       _decalageX += details.delta.dx / scale;
+                                       _decalageY += details.delta.dy / scale;
+                                     });
+                                  },
+                                  onPanEnd: (details) {
+                                     setState(() => _isDragging = false);
+                                     _genererIncrustation(); 
+                                  },
+                                  child: Transform.rotate(
+                                    angle: angleRad,
+                                    alignment: Alignment.topLeft, 
+                                    child: Opacity(
+                                      // Transparent (0.0) au repos, 0.65 quand on déplace
+                                      opacity: _isDragging ? 0.65 : 0.0, 
+                                      child: Image.asset(climPath, fit: BoxFit.fill),
+                                    ),
+                                  ),
+                                ),
+                              ),
+
+                            // 3. CHARGEMENT
+                            if (_isProcessing && !_isDragging && _imageResultatBytes != null)
+                              Positioned.fill(
+                                child: Container(
+                                  color: Colors.black38,
+                                  child: const Center(
+                                    child: CircularProgressIndicator(color: Colors.white),
+                                  ),
+                                ),
+                              ),
+                          ],
+                        );
+                      },
+                    ),
                   ),
               ),
             ),
@@ -412,8 +524,8 @@ class _EcranResultatState extends State<EcranResultat> {
         ],
       ),
       floatingActionButton: FloatingActionButton.extended(
-        onPressed: _isProcessing ? null : _lancerAnalyseEtIncrustation,
-        label: const Text("Générer la simulation"),
+        onPressed: _isProcessing ? null : _analyserImage,
+        label: const Text("Analyser l'image"),
         icon: const Icon(Icons.auto_fix_high),
       ),
       floatingActionButtonLocation: FloatingActionButtonLocation.centerFloat,
