@@ -25,13 +25,13 @@ class TraitementImage {
   // ==========================================
   static Future<Uint8List?> incrusterClimatisation({
     required String photoPath,
-    required Uint8List climBytes, // OPTIMISATION : Les octets sont déjà en RAM !
+    required Uint8List climBytes,
     required List<Map<String, double>> pointsIA,
     double decalageX = 0.0,
     double decalageY = 0.0, required String climAssetPath,
   }) async {
     try {
-      // --- LECTURE DE L'IMAGE MURALE ---
+      // LECTURE DE L'IMAGE
       cv.Mat murMat = cv.imread(photoPath, flags: cv.IMREAD_COLOR);
       int wMur = murMat.cols;
       int hMur = murMat.rows;

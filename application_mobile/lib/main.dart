@@ -6,6 +6,7 @@ import 'package:camera/camera.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:tflite_flutter/tflite_flutter.dart';
 import 'package:image/image.dart' as img;
+import 'package:image_gallery_saver_plus/image_gallery_saver_plus.dart'; // NOUVEAU : Import de la sauvegarde
 
 import 'traitement_image.dart';
 
@@ -149,7 +150,7 @@ class _EcranAccueilState extends State<EcranAccueil> {
                   icon: const Icon(Icons.photo_library),
                   label: const Text('Galerie'),
                   style: ElevatedButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 15),
+                    padding: const EdgeInsets.symmetric(horizontal: 30, vertical: 15),
                     backgroundColor: Colors.white,
                     foregroundColor: Colors.teal,
                   ),
@@ -159,7 +160,7 @@ class _EcranAccueilState extends State<EcranAccueil> {
                   icon: const Icon(Icons.camera_alt),
                   label: const Text('Photo'),
                   style: ElevatedButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 15),
+                    padding: const EdgeInsets.symmetric(horizontal: 30, vertical: 15),
                     backgroundColor: Theme.of(context).colorScheme.primary,
                     foregroundColor: Theme.of(context).colorScheme.onPrimary,
                   ),
@@ -286,8 +287,6 @@ class _EcranResultatState extends State<EcranResultat> {
       }
 
       if (maxConfiance > 0.5) { 
-        print("IA : Autocollant détecté à ${(maxConfiance * 100).toStringAsFixed(1)}%");
-        
         double boxX = isTransposed ? outputMatrix[0][meilleurIndex][0] : outputMatrix[0][0][meilleurIndex];
         double boxY = isTransposed ? outputMatrix[0][meilleurIndex][1] : outputMatrix[0][1][meilleurIndex];
         double boxW = isTransposed ? outputMatrix[0][meilleurIndex][2] : outputMatrix[0][2][meilleurIndex];
@@ -322,17 +321,16 @@ class _EcranResultatState extends State<EcranResultat> {
           double yMax = (boxY * scale) + (boxH * scale) / 2;
 
           _pointsCibles = [
-            {'x': xMin, 'y': yMin},
-            {'x': xMax, 'y': yMin},
-            {'x': xMax, 'y': yMax},
-            {'x': xMin, 'y': yMax} 
+            {'x': xMin, 'y': yMin}, 
+            {'x': xMax, 'y': yMin}, 
+            {'x': xMax, 'y': yMax}, 
+            {'x': xMin, 'y': yMax}  
           ];
         }
 
         await _genererIncrustation();
 
       } else {
-        print("IA : Aucun autocollant trouvé !");
         setState(() {
           _pointsCibles = null; 
           _isProcessing = false;
@@ -382,11 +380,52 @@ class _EcranResultatState extends State<EcranResultat> {
     }
   }
 
+  Future<void> _sauvegarderImage() async {
+    if (_imageResultatBytes == null) return;
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Sauvegarde en cours...'), duration: Duration(milliseconds: 500)),
+    );
+
+    try {
+      final result = await ImageGallerySaverPlus.saveImage(
+        _imageResultatBytes!,
+        quality: 100,
+        name: "Devis_Clim_${DateTime.now().millisecondsSinceEpoch}", 
+      );
+
+      if (!mounted) return;
+
+      if (result['isSuccess'] == true) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Simulation sauvegardée dans la galerie !'),
+            backgroundColor: Colors.green,
+            duration: Duration(seconds: 3),
+          ),
+        );
+      } else {
+        throw Exception("Échec de la sauvegarde interne.");
+      }
+    } catch (e) {
+      print("Erreur de sauvegarde : $e");
+
+      if (!mounted) return; 
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Erreur lors de la sauvegarde.'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Incrustation de la climatisation'),
+        title: const Text('Configuration du Devis'),
         backgroundColor: Theme.of(context).colorScheme.inversePrimary,
       ),
       body: Column(
@@ -566,6 +605,17 @@ class _EcranResultatState extends State<EcranResultat> {
           const SizedBox(height: 80),
         ],
       ),
+      // BOUTON DE TELECHARGEMENT
+      floatingActionButton: (_imageResultatBytes != null && !_isProcessing)
+          ? FloatingActionButton.extended(
+              onPressed: _sauvegarderImage,
+              label: const Text("Sauvegarder l'image", style: TextStyle(fontWeight: FontWeight.bold)),
+              icon: const Icon(Icons.download),
+              backgroundColor: Theme.of(context).colorScheme.primary,
+              foregroundColor: Colors.white,
+            )
+          : null, // Si l'image n'est pas prête ou qu'il n'y a pas d'autocollant, on cache le bouton
+      floatingActionButtonLocation: FloatingActionButtonLocation.centerFloat,
     );
   }
 }
