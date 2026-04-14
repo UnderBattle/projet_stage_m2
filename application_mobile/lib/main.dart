@@ -1,12 +1,13 @@
 import 'dart:io';
-import 'dart:typed_data'; 
 import 'dart:math' as math; 
+import 'package:flutter/foundation.dart'; 
 import 'package:flutter/material.dart';
 import 'package:camera/camera.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:tflite_flutter/tflite_flutter.dart';
 import 'package:image/image.dart' as img;
-import 'package:image_gallery_saver_plus/image_gallery_saver_plus.dart'; // NOUVEAU : Import de la sauvegarde
+import 'package:image_gallery_saver_plus/image_gallery_saver_plus.dart'; 
+import 'package:path_provider/path_provider.dart';
 
 import 'traitement_image.dart';
 
@@ -20,6 +21,95 @@ Future<void> main() async {
     print('Erreur caméra : ${e.code}, ${e.description}');
   }
   runApp(const MonApplication());
+}
+
+// ==========================================
+// OPTIMISATION IMAGE (En Isolate pour ne pas avoir l'impression de freeze)
+// ==========================================
+Future<String?> _redimensionnerImageLourde(String imagePath) async {
+  try {
+    final imageBytes = await File(imagePath).readAsBytes();
+    img.Image? image = img.decodeImage(imageBytes);
+    
+    if (image == null) return null;
+
+    // Si l'image est plus grande que du 1920, on la réduit
+    int maxSize = 1920; 
+    if (image.width > maxSize || image.height > maxSize) {
+      print("Optimisation : L'image est trop grande (${image.width}x${image.height}). Redimensionnement...");
+      
+      // On conserve les proportions (Aspect Ratio)
+      img.Image resized;
+      if (image.width > image.height) {
+        resized = img.copyResize(image, width: maxSize);
+      } else {
+        resized = img.copyResize(image, height: maxSize);
+      }
+
+      // On la sauvegarde dans un dossier temporaire
+      final directory = await getTemporaryDirectory();
+      final path = '${directory.path}/photo_optimisee_${DateTime.now().millisecondsSinceEpoch}.jpg';
+      final newFile = File(path);
+      
+      // Encodage en JPEG (Qualité 90 pour garder les détails)
+      await newFile.writeAsBytes(img.encodeJpg(resized, quality: 90));
+      print("Optimisation : Nouvelle taille ${resized.width}x${resized.height} prête !");
+      return path;
+    }
+    
+    // Si l'image est déjà petite, on ne touche à rien
+    print("Optimisation : Taille correcte (${image.width}x${image.height}), pas de changement.");
+    return imagePath;
+    
+  } catch (e) {
+    print("Erreur d'optimisation image : $e");
+    return imagePath; // En cas de plantage, on rend l'originale pour ne pas bloquer l'appli
+  }
+}
+
+// ==========================================
+// FONCTION ISOLATE : DÉCODAGE IMAGE (Pour l'IA)
+// ==========================================
+Map<String, dynamic>? prepareImageMatrixForIA(Map<String, dynamic> params) {
+  Uint8List imageBytes = params['bytes'];
+  bool isNHWC = params['isNHWC'];
+
+  img.Image? originalImage = img.decodeImage(imageBytes);
+  if (originalImage == null) return null;
+
+  int w = originalImage.width;
+  int h = originalImage.height;
+
+  img.Image resizedImage = img.copyResize(originalImage, width: 1024, height: 1024);
+
+  List<dynamic> inputMatrix;
+  if (isNHWC) {
+    inputMatrix = List.generate(1, (i) => List.generate(1024, (j) => List.generate(1024, (k) => List.generate(3, (l) => 0.0))));
+    for (int y = 0; y < 1024; y++) {
+      for (int x = 0; x < 1024; x++) {
+        final pixel = resizedImage.getPixel(x, y);
+        inputMatrix[0][y][x][0] = pixel.r / 255.0; 
+        inputMatrix[0][y][x][1] = pixel.g / 255.0; 
+        inputMatrix[0][y][x][2] = pixel.b / 255.0; 
+      }
+    }
+  } else {
+    inputMatrix = List.generate(1, (i) => List.generate(3, (j) => List.generate(1024, (k) => List.generate(1024, (l) => 0.0))));
+    for (int y = 0; y < 1024; y++) {
+      for (int x = 0; x < 1024; x++) {
+        final pixel = resizedImage.getPixel(x, y);
+        inputMatrix[0][0][y][x] = pixel.r / 255.0; 
+        inputMatrix[0][1][y][x] = pixel.g / 255.0; 
+        inputMatrix[0][2][y][x] = pixel.b / 255.0; 
+      }
+    }
+  }
+
+  return {
+    'width': w,
+    'height': h,
+    'matrix': inputMatrix
+  };
 }
 
 class MonApplication extends StatelessWidget {
@@ -51,6 +141,7 @@ class EcranAccueil extends StatefulWidget {
 class _EcranAccueilState extends State<EcranAccueil> {
   CameraController? _controller;
   final ImagePicker _picker = ImagePicker();
+  bool _isOptimizing = false; // Pour afficher un petit loader pendant la compression
 
   @override
   void initState() {
@@ -79,31 +170,47 @@ class _EcranAccueilState extends State<EcranAccueil> {
   Future<void> _prendrePhoto() async {
     if (_controller != null && _controller!.value.isInitialized) {
       try {
-        final image = await _controller!.takePicture();
+        setState(() => _isOptimizing = true);
+        final rawImage = await _controller!.takePicture();
+        
+        // On optimise la photo en arrière-plan
+        String? optimizedPath = await compute(_redimensionnerImageLourde, rawImage.path);
+        
         if (!mounted) return;
-        _allerVersResultat(image);
+        setState(() => _isOptimizing = false);
+        _allerVersResultat(optimizedPath ?? rawImage.path);
+
       } catch (e) {
         print("Erreur appareil photo : $e");
+        setState(() => _isOptimizing = false);
       }
     }
   }
 
   Future<void> _ouvrirGalerie() async {
     try {
-      final XFile? image = await _picker.pickImage(source: ImageSource.gallery);
-      if (image != null && mounted) {
-        _allerVersResultat(image);
+      final XFile? rawImage = await _picker.pickImage(source: ImageSource.gallery);
+      if (rawImage != null && mounted) {
+        setState(() => _isOptimizing = true);
+        
+        // On optimise la photo de la galerie en arrière-plan
+        String? optimizedPath = await compute(_redimensionnerImageLourde, rawImage.path);
+        
+        if (!mounted) return;
+        setState(() => _isOptimizing = false);
+        _allerVersResultat(optimizedPath ?? rawImage.path);
       }
     } catch (e) {
       print("Erreur galerie : $e");
+      setState(() => _isOptimizing = false);
     }
   }
 
-  void _allerVersResultat(XFile image) {
+  void _allerVersResultat(String imagePath) {
     Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (context) => EcranResultat(photo: image),
+        builder: (context) => EcranResultat(photoPath: imagePath), // On passe juste un String
       ),
     );
   }
@@ -115,59 +222,79 @@ class _EcranAccueilState extends State<EcranAccueil> {
         title: const Text('Choisir le mur'),
         backgroundColor: Theme.of(context).colorScheme.inversePrimary,
       ),
-      body: Column(
+      body: Stack(
         children: [
-          Expanded(
-            child: Container(
-              width: double.infinity,
-              margin: const EdgeInsets.all(16.0),
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(15),
-                child: _controller != null && _controller!.value.isInitialized
-                    ? SizedBox(
-                        width: double.infinity,
-                        height: double.infinity,
-                        child: FittedBox(
-                          fit: BoxFit.cover,
-                          child: SizedBox(
-                            width: _controller!.value.previewSize?.height ?? 1,
-                            height: _controller!.value.previewSize?.width ?? 1,
-                            child: CameraPreview(_controller!),
-                          ),
-                        ),
-                      )
-                    : const Center(child: CircularProgressIndicator()),
+          Column(
+            children: [
+              Expanded(
+                child: Container(
+                  width: double.infinity,
+                  margin: const EdgeInsets.all(16.0),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(15),
+                    child: _controller != null && _controller!.value.isInitialized
+                        ? SizedBox(
+                            width: double.infinity,
+                            height: double.infinity,
+                            child: FittedBox(
+                              fit: BoxFit.cover,
+                              child: SizedBox(
+                                width: _controller!.value.previewSize?.height ?? 1,
+                                height: _controller!.value.previewSize?.width ?? 1,
+                                child: CameraPreview(_controller!),
+                              ),
+                            ),
+                          )
+                        : const Center(child: CircularProgressIndicator()),
+                  ),
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.only(bottom: 40.0, left: 16.0, right: 16.0),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                  children: [
+                    ElevatedButton.icon(
+                      onPressed: _isOptimizing ? null : _ouvrirGalerie,
+                      icon: const Icon(Icons.photo_library),
+                      label: const Text('Galerie'),
+                      style: ElevatedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(horizontal: 30, vertical: 15),
+                        backgroundColor: Colors.white,
+                        foregroundColor: Colors.teal,
+                      ),
+                    ),
+                    ElevatedButton.icon(
+                      onPressed: _isOptimizing ? null : _prendrePhoto,
+                      icon: const Icon(Icons.camera_alt),
+                      label: const Text('Photo'),
+                      style: ElevatedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(horizontal: 30, vertical: 15),
+                        backgroundColor: Theme.of(context).colorScheme.primary,
+                        foregroundColor: Theme.of(context).colorScheme.onPrimary,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          
+          // Un léger voile noir avec un texte rassurant pendant que le téléphone redimensionne la grosse photo
+          if (_isOptimizing)
+            Container(
+              color: Colors.black54,
+              child: const Center(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    CircularProgressIndicator(color: Colors.white),
+                    SizedBox(height: 15),
+                    Text("Préparation de l'image...", style: TextStyle(color: Colors.white, fontSize: 16)),
+                  ],
+                ),
               ),
             ),
-          ),
-          Padding(
-            padding: const EdgeInsets.only(bottom: 40.0, left: 16.0, right: 16.0),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-              children: [
-                ElevatedButton.icon(
-                  onPressed: _ouvrirGalerie,
-                  icon: const Icon(Icons.photo_library),
-                  label: const Text('Galerie'),
-                  style: ElevatedButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(horizontal: 30, vertical: 15),
-                    backgroundColor: Colors.white,
-                    foregroundColor: Colors.teal,
-                  ),
-                ),
-                ElevatedButton.icon(
-                  onPressed: _prendrePhoto,
-                  icon: const Icon(Icons.camera_alt),
-                  label: const Text('Photo'),
-                  style: ElevatedButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(horizontal: 30, vertical: 15),
-                    backgroundColor: Theme.of(context).colorScheme.primary,
-                    foregroundColor: Theme.of(context).colorScheme.onPrimary,
-                  ),
-                ),
-              ],
-            ),
-          ),
         ],
       ),
     );
@@ -178,20 +305,32 @@ class _EcranAccueilState extends State<EcranAccueil> {
 // ÉCRAN 2 : LE RÉSULTAT, L'IA ET OPENCV
 // ==========================================
 class EcranResultat extends StatefulWidget {
-  final XFile photo;
-  const EcranResultat({super.key, required this.photo});
+  final String photoPath; // Changé de XFile à String pour correspondre à notre chemin optimisé
+  const EcranResultat({super.key, required this.photoPath});
 
   @override
   State<EcranResultat> createState() => _EcranResultatState();
 }
 
 class _EcranResultatState extends State<EcranResultat> {
-  String modeleSelectionne = 'Takao Plus Blanc';
-  final List<String> catalogueClims = ['Takao Plus Blanc', 'Takao Plus Noir'];
+  final List<Map<String, String>> catalogueClims = [
+    {
+      'nom': 'Takao Plus Blanc',
+      'chemin': 'assets/installations/clim_takao_plus/8e74c5374539-takao-plus-blanc-face-atlantic.png'
+    },
+    {
+      'nom': 'Takao Plus Noir',
+      'chemin': 'assets/installations/clim_takao_plus/baae79054b9d-takao-plus-noir-face-atlantic.png'
+    }
+  ];
+  
+  String? _modeleSelectionneChemin;
 
   bool _isProcessing = true; 
   Interpreter? _iaModel;
+  
   Uint8List? _imageResultatBytes; 
+  Uint8List? _imageFondPropreBytes; 
 
   int? _imageWidth;
   int? _imageHeight;
@@ -226,42 +365,22 @@ class _EcranResultatState extends State<EcranResultat> {
     if (_iaModel == null) return;
 
     try {
-      print("\n[IA] === DÉBUT DE L'ANALYSE AUTOMATIQUE ===");
+      print("\n[IA] === DÉBUT DE L'ANALYSE AUTOMATIQUE AVEC ISOLATES ===");
 
-      final imageBytes = await File(widget.photo.path).readAsBytes();
-      img.Image? originalImage = img.decodeImage(imageBytes);
-      if (originalImage == null) throw Exception("Impossible de lire l'image.");
-
-      _imageWidth = originalImage.width;
-      _imageHeight = originalImage.height;
-
-      img.Image resizedImage = img.copyResize(originalImage, width: 1024, height: 1024);
-
+      final imageBytes = await File(widget.photoPath).readAsBytes();
       var inputShape = _iaModel!.getInputTensor(0).shape;
       bool isNHWC = inputShape[3] == 3;
       
-      List<dynamic> inputMatrix;
-      if (isNHWC) {
-        inputMatrix = List.generate(1, (i) => List.generate(1024, (j) => List.generate(1024, (k) => List.generate(3, (l) => 0.0))));
-        for (int y = 0; y < 1024; y++) {
-          for (int x = 0; x < 1024; x++) {
-            final pixel = resizedImage.getPixel(x, y);
-            inputMatrix[0][y][x][0] = pixel.r / 255.0; 
-            inputMatrix[0][y][x][1] = pixel.g / 255.0; 
-            inputMatrix[0][y][x][2] = pixel.b / 255.0; 
-          }
-        }
-      } else {
-        inputMatrix = List.generate(1, (i) => List.generate(3, (j) => List.generate(1024, (k) => List.generate(1024, (l) => 0.0))));
-        for (int y = 0; y < 1024; y++) {
-          for (int x = 0; x < 1024; x++) {
-            final pixel = resizedImage.getPixel(x, y);
-            inputMatrix[0][0][y][x] = pixel.r / 255.0; 
-            inputMatrix[0][1][y][x] = pixel.g / 255.0; 
-            inputMatrix[0][2][y][x] = pixel.b / 255.0; 
-          }
-        }
-      }
+      final resultMatrixPrep = await compute(prepareImageMatrixForIA, {
+        'bytes': imageBytes,
+        'isNHWC': isNHWC
+      });
+
+      if (resultMatrixPrep == null) throw Exception("Impossible de lire l'image.");
+
+      _imageWidth = resultMatrixPrep['width'];
+      _imageHeight = resultMatrixPrep['height'];
+      var inputMatrix = resultMatrixPrep['matrix'];
 
       var outputShape = _iaModel!.getOutputTensor(0).shape;
       var outputMatrix = List.generate(outputShape[0], (i) => 
@@ -328,7 +447,16 @@ class _EcranResultatState extends State<EcranResultat> {
           ];
         }
 
-        await _genererIncrustation();
+        if (_pointsCibles != null) {
+           _imageFondPropreBytes = await compute(TraitementImage.effacerAutocollantIsolate, {
+             'photoPath': widget.photoPath,
+             'pointsIA': _pointsCibles!,
+           });
+        }
+
+        setState(() {
+          _isProcessing = false;
+        });
 
       } else {
         setState(() {
@@ -347,26 +475,24 @@ class _EcranResultatState extends State<EcranResultat> {
   }
 
   Future<void> _genererIncrustation() async {
-    if (_pointsCibles == null) return;
+    if (_pointsCibles == null || _modeleSelectionneChemin == null) return;
     
     setState(() => _isProcessing = true);
 
     try {
-      String climPath = modeleSelectionne == 'Takao Plus Blanc'
-          ? 'assets/installations/clim_takao_plus/8e74c5374539-takao-plus-blanc-face-atlantic.png'
-          : 'assets/installations/clim_takao_plus/baae79054b9d-takao-plus-noir-face-atlantic.png';
+      String climPath = _modeleSelectionneChemin!;
       
       final ByteData data = await DefaultAssetBundle.of(context).load(climPath);
       Uint8List climBytes = data.buffer.asUint8List();
 
-      Uint8List? resultImage = await TraitementImage.incrusterClimatisation(
-        photoPath: widget.photo.path,
-        climAssetPath: climPath,
-        pointsIA: _pointsCibles!,
-        decalageX: _decalageX, 
-        decalageY: _decalageY, 
-        climBytes: climBytes, 
-      );
+      Uint8List? resultImage = await compute(TraitementImage.incrusterClimatisationIsolate, {
+        'photoPath': widget.photoPath,
+        'climBytes': climBytes,
+        'pointsIA': _pointsCibles!,
+        'decalageX': _decalageX,
+        'decalageY': _decalageY,
+        'climAssetPath': climPath,
+      });
 
       if (resultImage != null) {
         setState(() {
@@ -384,7 +510,7 @@ class _EcranResultatState extends State<EcranResultat> {
     if (_imageResultatBytes == null) return;
 
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Sauvegarde en cours...'), duration: Duration(milliseconds: 500)),
+      const SnackBar(content: Text('⏳ Sauvegarde en cours...'), duration: Duration(milliseconds: 500)),
     );
 
     try {
@@ -399,7 +525,7 @@ class _EcranResultatState extends State<EcranResultat> {
       if (result['isSuccess'] == true) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('Simulation sauvegardée dans la galerie !'),
+            content: Text('✅ Simulation sauvegardée dans la galerie !'),
             backgroundColor: Colors.green,
             duration: Duration(seconds: 3),
           ),
@@ -414,7 +540,7 @@ class _EcranResultatState extends State<EcranResultat> {
 
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('Erreur lors de la sauvegarde.'),
+          content: Text('❌ Erreur lors de la sauvegarde.'),
           backgroundColor: Colors.red,
         ),
       );
@@ -430,39 +556,10 @@ class _EcranResultatState extends State<EcranResultat> {
       ),
       body: Column(
         children: [
-          Padding(
-            padding: const EdgeInsets.all(16.0),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                const Text('Modèle : ', style: TextStyle(fontSize: 18)),
-                const SizedBox(width: 10),
-                DropdownButton<String>(
-                  value: modeleSelectionne,
-                  icon: const Icon(Icons.arrow_downward),
-                  elevation: 16,
-                  style: const TextStyle(color: Colors.teal, fontSize: 18, fontWeight: FontWeight.bold),
-                  underline: Container(height: 2, color: Colors.tealAccent),
-                  onChanged: (String? nouveauChoix) {
-                    setState(() {
-                      modeleSelectionne = nouveauChoix!;
-                      if (_pointsCibles != null) {
-                         _genererIncrustation();
-                      }
-                    });
-                  },
-                  items: catalogueClims.map<DropdownMenuItem<String>>((String modele) {
-                    return DropdownMenuItem<String>(value: modele, child: Text(modele));
-                  }).toList(),
-                ),
-              ],
-            ),
-          ),
-
           Expanded(
             child: Container(
               width: double.infinity,
-              margin: const EdgeInsets.all(16.0),
+              margin: const EdgeInsets.only(left: 16.0, right: 16.0, top: 16.0, bottom: 8.0),
               child: ClipRRect(
                 borderRadius: BorderRadius.circular(15),
                 child: InteractiveViewer(
@@ -476,14 +573,14 @@ class _EcranResultatState extends State<EcranResultat> {
                         if (_imageWidth == null || _imageHeight == null) {
                            return _isProcessing 
                               ? const Center(child: CircularProgressIndicator()) 
-                              : Image.file(File(widget.photo.path), fit: BoxFit.contain);
+                              : Image.file(File(widget.photoPath), fit: BoxFit.contain);
                         }
 
                         if (_pointsCibles == null) {
                            return Stack(
                              children: [
                                Positioned.fill(
-                                 child: Image.file(File(widget.photo.path), fit: BoxFit.contain),
+                                 child: Image.file(File(widget.photoPath), fit: BoxFit.contain),
                                ),
                                if (!_isProcessing)
                                  Center(
@@ -542,50 +639,51 @@ class _EcranResultatState extends State<EcranResultat> {
 
                         double angleRad = math.atan2(dy, dx);
 
-                        String climPath = modeleSelectionne == 'Takao Plus Blanc'
-                          ? 'assets/installations/clim_takao_plus/8e74c5374539-takao-plus-blanc-face-atlantic.png'
-                          : 'assets/installations/clim_takao_plus/baae79054b9d-takao-plus-noir-face-atlantic.png';
-
                         return Stack(
                           children: [
                             Positioned.fill(
-                              child: _isDragging || _imageResultatBytes == null
-                                  ? Image.file(File(widget.photo.path), fit: BoxFit.contain)
-                                  : Image.memory(_imageResultatBytes!, fit: BoxFit.contain),
+                              child: _modeleSelectionneChemin == null
+                                  ? Image.file(File(widget.photoPath), fit: BoxFit.contain)
+                                  : (_isDragging && _imageFondPropreBytes != null)
+                                      ? Image.memory(_imageFondPropreBytes!, fit: BoxFit.contain)
+                                      : (_imageResultatBytes != null
+                                          ? Image.memory(_imageResultatBytes!, fit: BoxFit.contain)
+                                          : Image.file(File(widget.photoPath), fit: BoxFit.contain)),
                             ),
 
-                            Positioned(
-                              left: climScreenX,
-                              top: climScreenY,
-                              width: climScreenW,
-                              height: climScreenH,
-                              child: GestureDetector(
-                                behavior: HitTestBehavior.translucent, 
-                                onPanStart: (details) {
-                                   setState(() => _isDragging = true);
-                                },
-                                onPanUpdate: (details) {
-                                   setState(() {
-                                     _decalageX += details.delta.dx / scale;
-                                     _decalageY += details.delta.dy / scale;
-                                   });
-                                },
-                                onPanEnd: (details) {
-                                   setState(() => _isDragging = false);
-                                   _genererIncrustation(); 
-                                },
-                                child: Transform.rotate(
-                                  angle: angleRad,
-                                  alignment: Alignment.topLeft, 
-                                  child: Opacity(
-                                    opacity: _isDragging ? 0.65 : 0.0, 
-                                    child: Image.asset(climPath, fit: BoxFit.fill),
+                            if (_modeleSelectionneChemin != null)
+                              Positioned(
+                                left: climScreenX,
+                                top: climScreenY,
+                                width: climScreenW,
+                                height: climScreenH,
+                                child: GestureDetector(
+                                  behavior: HitTestBehavior.translucent, 
+                                  onPanStart: (details) {
+                                     setState(() => _isDragging = true);
+                                  },
+                                  onPanUpdate: (details) {
+                                     setState(() {
+                                       _decalageX += details.delta.dx / scale;
+                                       _decalageY += details.delta.dy / scale;
+                                     });
+                                  },
+                                  onPanEnd: (details) {
+                                     setState(() => _isDragging = false);
+                                     _genererIncrustation(); 
+                                  },
+                                  child: Transform.rotate(
+                                    angle: angleRad,
+                                    alignment: Alignment.topLeft, 
+                                    child: Opacity(
+                                      opacity: _isDragging ? 0.65 : 0.0, 
+                                      child: Image.asset(_modeleSelectionneChemin!, fit: BoxFit.fill),
+                                    ),
                                   ),
                                 ),
                               ),
-                            ),
 
-                            if (_isProcessing && !_isDragging && _imageResultatBytes != null)
+                            if (_isProcessing && !_isDragging && _modeleSelectionneChemin != null)
                               Positioned.fill(
                                 child: Container(
                                   color: Colors.black38,
@@ -602,19 +700,85 @@ class _EcranResultatState extends State<EcranResultat> {
               ),
             ),
           ),
+
+          if (_pointsCibles != null) 
+            Container(
+              height: 140,
+              padding: const EdgeInsets.symmetric(vertical: 10),
+              child: ListView.builder(
+                scrollDirection: Axis.horizontal,
+                itemCount: catalogueClims.length,
+                itemBuilder: (context, index) {
+                  final clim = catalogueClims[index];
+                  final bool isSelected = _modeleSelectionneChemin == clim['chemin'];
+
+                  return GestureDetector(
+                    onTap: () {
+                      if (_isProcessing) return; 
+                      setState(() {
+                        _modeleSelectionneChemin = clim['chemin'];
+                        _genererIncrustation();
+                      });
+                    },
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 200),
+                      width: 120, 
+                      margin: EdgeInsets.only(left: 16.0, right: index == catalogueClims.length - 1 ? 16.0 : 0.0),
+                      decoration: BoxDecoration(
+                        color: isSelected ? Colors.teal.withValues(alpha : 0.1) : Colors.white,
+                        border: Border.all(
+                          color: isSelected ? Colors.teal : Colors.grey.shade300,
+                          width: isSelected ? 3 : 1,
+                        ),
+                        borderRadius: BorderRadius.circular(15),
+                        boxShadow: [
+                          if (isSelected)
+                            BoxShadow(color: Colors.teal.withValues(alpha : 0.2), blurRadius: 8, offset: const Offset(0, 4))
+                        ],
+                      ),
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Expanded(
+                            child: Padding(
+                              padding: const EdgeInsets.all(8.0),
+                              child: Image.asset(clim['chemin']!, fit: BoxFit.contain),
+                            ),
+                          ),
+                          Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 4.0, vertical: 8.0),
+                            child: Text(
+                              clim['nom']!,
+                              style: TextStyle(
+                                fontSize: 12,
+                                fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                                color: isSelected ? Colors.teal.shade800 : Colors.black87,
+                              ),
+                              textAlign: TextAlign.center,
+                              maxLines: 2,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ),
+            
           const SizedBox(height: 80),
         ],
       ),
-      // BOUTON DE TELECHARGEMENT
+      
       floatingActionButton: (_imageResultatBytes != null && !_isProcessing)
           ? FloatingActionButton.extended(
               onPressed: _sauvegarderImage,
-              label: const Text("Sauvegarder l'image", style: TextStyle(fontWeight: FontWeight.bold)),
+              label: const Text("Sauvegarder", style: TextStyle(fontWeight: FontWeight.bold)),
               icon: const Icon(Icons.download),
               backgroundColor: Theme.of(context).colorScheme.primary,
               foregroundColor: Colors.white,
             )
-          : null, // Si l'image n'est pas prête ou qu'il n'y a pas d'autocollant, on cache le bouton
+          : null,
       floatingActionButtonLocation: FloatingActionButtonLocation.centerFloat,
     );
   }

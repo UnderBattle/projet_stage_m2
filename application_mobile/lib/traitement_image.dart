@@ -5,7 +5,29 @@ import 'package:opencv_dart/opencv_dart.dart' as cv;
 class TraitementImage {
 
   // ==========================================
-  // 1. TRI MATHÉMATIQUE DES POINTS
+  // PASSERELLES POUR LES ISOLATES (CALCUL EN ARRIÈRE-PLAN)
+  // ==========================================
+  static Future<Uint8List?> effacerAutocollantIsolate(Map<String, dynamic> params) async {
+    return await effacerAutocollant(
+      photoPath: params['photoPath'] as String,
+      pointsIA: (params['pointsIA'] as List).map((e) => Map<String, double>.from(e)).toList(),
+    );
+  }
+
+  static Future<Uint8List?> incrusterClimatisationIsolate(Map<String, dynamic> params) async {
+    return await incrusterClimatisation(
+      photoPath: params['photoPath'] as String,
+      climBytes: params['climBytes'] as Uint8List,
+      pointsIA: (params['pointsIA'] as List).map((e) => Map<String, double>.from(e)).toList(),
+      decalageX: params['decalageX'] as double,
+      decalageY: params['decalageY'] as double,
+      climAssetPath: params['climAssetPath'] as String,
+    );
+  }
+
+
+  // ==========================================
+  // 1. TRI MATHÉMATIQUE DES POINTS ET FOND PROPRE
   // ==========================================
   static List<Map<String, double>> trierPoints(List<Map<String, double>> points) {
     List<Map<String, double>> pts = List.from(points);
@@ -20,18 +42,11 @@ class TraitementImage {
     return [hg, hd, bd, bg];
   }
 
-  // ==========================================
-  // 2. LE TRAITEMENT D'IMAGE OPTIMISÉ
-  // ==========================================
-  static Future<Uint8List?> incrusterClimatisation({
+  static Future<Uint8List?> effacerAutocollant({
     required String photoPath,
-    required Uint8List climBytes,
     required List<Map<String, double>> pointsIA,
-    double decalageX = 0.0,
-    double decalageY = 0.0, required String climAssetPath,
   }) async {
     try {
-      // LECTURE DE L'IMAGE
       cv.Mat murMat = cv.imread(photoPath, flags: cv.IMREAD_COLOR);
       int wMur = murMat.cols;
       int hMur = murMat.rows;
@@ -43,7 +58,70 @@ class TraitementImage {
         return cv.Point((pt['x']! * ratioX).toInt(), (pt['y']! * ratioY).toInt());
       }).toList();
 
-      // === PHASE 1 : INPAINTING MAISON (FLOU DE DIFFUSION) ===
+      cv.Mat maskGeo = cv.Mat.zeros(hMur, wMur, cv.MatType.CV_8UC1);
+      cv.fillPoly(maskGeo, cv.VecVecPoint.fromList([ptsOri]), cv.Scalar.all(255));
+
+      cv.Mat kernelDilate = cv.Mat.ones(15, 15, cv.MatType.CV_8UC1);
+      cv.Mat maskMurExt = cv.dilate(maskGeo, kernelDilate, iterations: 1);
+      cv.Mat maskBagueMur = cv.subtract(maskMurExt, maskGeo);
+
+      cv.Scalar couleurMoyenneMur = cv.mean(murMat, mask: maskBagueMur);
+      
+      cv.Mat murBase = murMat.clone();
+      cv.fillPoly(murBase, cv.VecVecPoint.fromList([ptsOri]), couleurMoyenneMur);
+
+      cv.Mat murFlou = cv.gaussianBlur(murBase, (81, 81), 0.0);
+
+      cv.Mat maskTransition = cv.dilate(maskGeo, kernelDilate, iterations: 2); 
+      cv.Mat maskFeather8u = cv.gaussianBlur(maskTransition, (51, 51), 0.0);
+
+      cv.Mat maskFeather3c = cv.cvtColor(maskFeather8u, cv.COLOR_GRAY2BGR);
+      cv.Mat maskFeatherF = maskFeather3c.convertTo(cv.MatType.CV_32FC3, alpha: 1.0 / 255.0);
+
+      cv.Mat invMaskFeather8u = cv.bitwiseNOT(maskFeather8u);
+      cv.Mat invMaskFeather3c = cv.cvtColor(invMaskFeather8u, cv.COLOR_GRAY2BGR);
+      cv.Mat invMaskFeatherF = invMaskFeather3c.convertTo(cv.MatType.CV_32FC3, alpha: 1.0 / 255.0);
+
+      cv.Mat murBaseF = murBase.convertTo(cv.MatType.CV_32FC3);
+      cv.Mat murFlouF = murFlou.convertTo(cv.MatType.CV_32FC3);
+
+      cv.Mat fgInpaint = cv.multiply(murFlouF, maskFeatherF);
+      cv.Mat bgInpaint = cv.multiply(murBaseF, invMaskFeatherF);
+      
+      cv.Mat resultImgF = cv.add(fgInpaint, bgInpaint);
+      cv.Mat resultImg = resultImgF.convertTo(cv.MatType.CV_8UC3);
+
+      var encodeResult = cv.imencode('.jpg', resultImg);
+      return encodeResult.$2;
+    } catch (e) {
+      print("[OpenCV] Erreur lors de la génération du fond propre : $e");
+      return null;
+    }
+  }
+
+  // ==========================================
+  // 2. LE TRAITEMENT D'IMAGE COMPLET
+  // ==========================================
+  static Future<Uint8List?> incrusterClimatisation({
+    required String photoPath,
+    required Uint8List climBytes,
+    required List<Map<String, double>> pointsIA,
+    double decalageX = 0.0,
+    double decalageY = 0.0, required String climAssetPath,
+  }) async {
+    try {
+      cv.Mat murMat = cv.imread(photoPath, flags: cv.IMREAD_COLOR);
+      int wMur = murMat.cols;
+      int hMur = murMat.rows;
+
+      double ratioX = wMur / 1024.0;
+      double ratioY = hMur / 1024.0;
+
+      List<cv.Point> ptsOri = pointsIA.map((pt) {
+        return cv.Point((pt['x']! * ratioX).toInt(), (pt['y']! * ratioY).toInt());
+      }).toList();
+
+      // === PHASE 1 : INPAINTING MAISON ===
       cv.Mat maskGeo = cv.Mat.zeros(hMur, wMur, cv.MatType.CV_8UC1);
       cv.fillPoly(maskGeo, cv.VecVecPoint.fromList([ptsOri]), cv.Scalar.all(255));
 
@@ -104,7 +182,6 @@ class TraitementImage {
       ];
 
       // === PHASE 3 : TAILLE RÉELLE ET DÉFORMATION 3D ===
-      // OPTIMISATION : L'image est lue instantanément depuis la RAM
       cv.Mat climMat = cv.imdecode(climBytes, cv.IMREAD_UNCHANGED);
 
       double hClimMm = 270.0; 
