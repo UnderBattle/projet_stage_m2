@@ -211,23 +211,28 @@ class TraitementImage {
 
       cv.Mat climWarped = cv.warpPerspective(climMat, hMatrix, (wMur, hMur));
       var channels = cv.split(climWarped);
-      cv.Mat alphaMask = channels[3]; 
+      cv.Mat alphaMaskOriginale = channels[3]; 
+      // Lissage des contours de la clim pour éviter l'effet "découpé au ciseau"
+      cv.Mat alphaMask = cv.gaussianBlur(alphaMaskOriginale, (3, 3), 0.0);
+      
       cv.Mat climBgr = cv.cvtColor(climWarped, cv.COLOR_BGRA2BGR);
       cv.Mat maskBinaire = cv.threshold(alphaMask, 5, 255, cv.THRESH_BINARY).$2;
 
-      // === PHASE 4 : L'OMBRE PORTÉE RÉALISTE ===
+      // === PHASE 4 : L'OMBRE PORTÉE RÉALISTE (Lissée) ===
       List<cv.Point> ptsDstOmbre = ptsDstLisses.map((pt) => cv.Point(pt.x + 10, pt.y + 20)).toList();
       cv.Mat hMatrixOmbre = cv.getPerspectiveTransform(vecPtsSrc, cv.VecPoint.fromList(ptsDstOmbre));
       cv.Mat climWarpedOmbre = cv.warpPerspective(climMat, hMatrixOmbre, (wMur, hMur));
       cv.Mat alphaOmbre = cv.split(climWarpedOmbre)[3];
 
       cv.Mat smallAlpha = cv.resize(alphaOmbre, (wMur ~/ 4, hMur ~/ 4));
-      cv.Mat smallOmbreFloue = cv.gaussianBlur(smallAlpha, (15, 15), 0.0);
-      cv.Mat ombreFloue = cv.resize(smallOmbreFloue, (wMur, hMur));
+      cv.Mat smallOmbreFloue = cv.gaussianBlur(smallAlpha, (25, 25), 0.0);
+      cv.Mat ombreFloueUpscaled = cv.resize(smallOmbreFloue, (wMur, hMur), interpolation: cv.INTER_CUBIC);
+      cv.Mat ombreFloue = cv.gaussianBlur(ombreFloueUpscaled, (11, 11), 0.0);
 
       cv.Mat grayMur = cv.cvtColor(resultImg, cv.COLOR_BGR2GRAY);
       cv.Scalar lumMurGlobal = cv.mean(grayMur);
-      double intensite = 0.05 + (lumMurGlobal.val[0] / 255.0) * 0.20;
+
+      double intensite = 0.08 + (lumMurGlobal.val[0] / 255.0) * 0.20;
 
       cv.Mat ombre8u = ombreFloue.convertTo(cv.MatType.CV_8UC1, alpha: intensite);
       cv.Mat invOmbre8u = cv.bitwiseNOT(ombre8u);
@@ -239,7 +244,7 @@ class TraitementImage {
       
       cv.Mat murOmbre = murOmbreF.convertTo(cv.MatType.CV_8UC3);
 
-      // === PHASE 5 : LUMIÈRE ET TEMPÉRATURE DE COULEUR (ADOUCIE)
+      // === PHASE 5 : LUMIÈRE ET TEMPÉRATURE DE COULEUR (AVEC CONTRASTE)
       
       // 1. Analyse de la couleur ambiante sous la clim (BGR)
       cv.Scalar meanMurSousClim = cv.mean(murOmbre, mask: maskBinaire);
@@ -256,40 +261,45 @@ class TraitementImage {
       double tintG = gMur / lumMur;
       double tintR = rMur / lumMur;
 
-      // --- NOUVEAU : DOSAGE DE LA TEINTE ---
-      // Force d'absorption de la couleur de la pièce (0.0 = Aucune, 1.0 = Totale)
-      double forceTeinte = 0.45; // 35% est un excellent compromis pour du plastique
+      // Force d'absorption de la couleur de la pièce
+      double forceTeinte = 0.45; 
       tintB = 1.0 + (tintB - 1.0) * forceTeinte;
       tintG = 1.0 + (tintG - 1.0) * forceTeinte;
       tintR = 1.0 + (tintR - 1.0) * forceTeinte;
 
-      // 4. Teinture multiplicative (La clim absorbe subtilement la couleur du mur)
+      // Teinture multiplicative
       cv.Mat tintMat = cv.Mat.zeros(hMur, wMur, cv.MatType.CV_32FC3)..setTo(cv.Scalar(tintB, tintG, tintR, 0));
       cv.Mat climF = climBgr.convertTo(cv.MatType.CV_32FC3);
       cv.Mat climTintedF = cv.multiply(climF, tintMat);
       cv.Mat climTinted = climTintedF.convertTo(cv.MatType.CV_8UC3);
 
-      // 5. Ajustement de l'Exposition globale (Volume de lumière)
+      // Ajustement de l'Exposition globale
       cv.Mat grayClimTinted = cv.cvtColor(climTinted, cv.COLOR_BGR2GRAY);
       cv.Scalar meanGrayClim = cv.mean(grayClimTinted, mask: maskBinaire);
       double lumClim = math.max(meanGrayClim.val[0], 1.0);
 
-      // --- CORRECTION DE LA LUMINOSITÉ ---
       double ratioLum = lumMur / lumClim;
-      
-      // On permet à la clim de s'adapter à 80% à l'obscurité du mur (au lieu de 40%)
       double ratioAdouci = 1.0 - ((1.0 - ratioLum) * 0.60); 
-      
-      // On l'autorise à devenir beaucoup plus sombre (jusqu'à 35% de sa lumière au lieu de 70%)
       ratioAdouci = math.max(0.35, math.min(1.1, ratioAdouci)); 
 
       cv.Mat climHsv = cv.cvtColor(climTinted, cv.COLOR_BGR2HSV);
       var hsvChannels = cv.split(climHsv);
       
-      // On modifie uniquement le canal V (Luminosité/Valeur)
-      cv.Mat vScaled = cv.addWeighted(hsvChannels[2], ratioAdouci, hsvChannels[2], 0.0, 0.0);
-      hsvChannels[2] = vScaled;
+      // MATCHING DE CONTRASTE
+      // On cherche le pixel le plus sombre de la pièce
+      var minMaxMur = cv.minMaxLoc(grayMur);
+      double niveauNoirMur = minMaxMur.$1; 
       
+      // On limite le noir max pour ne pas transformer la clim en un bloc gris brumeux
+      niveauNoirMur = math.min(niveauNoirMur, 45.0); 
+
+      // On ajuste le multiplicateur pour compenser l'ajout de lumière dans les zones noires
+      double ratioContraste = ratioAdouci * ((255.0 - niveauNoirMur) / 255.0);
+      
+      // On multiplie la lumière et on ajoute le niveau de noir d'ambiance
+      cv.Mat vScaled = cv.addWeighted(hsvChannels[2], ratioContraste, hsvChannels[2], 0.0, niveauNoirMur);
+      hsvChannels[2] = vScaled;
+
       cv.Mat climHsvFinal = cv.merge(hsvChannels);
       cv.Mat climRgbFinal = cv.cvtColor(climHsvFinal, cv.COLOR_HSV2BGR);
 
