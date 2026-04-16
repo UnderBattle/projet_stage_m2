@@ -1,6 +1,6 @@
-train: ../train/images
-val: ../valid/images
-test: ../test/images
+train: ./train/images
+val: ./valid/images
+test: ./test/images
 
 kpt_shape: [4, 3]
 flip_idx: [0, 1, 2, 3]

@@ -1,21 +1,29 @@
 from ultralytics import YOLO
 import os
+import glob
 import numpy as np
+
+# ==========================================
+# CONFIGURATION DES CHEMINS
+# ==========================================
+CHEMIN_DATA_YAML = '../../dataset_autocollant/data.yaml' 
+CHEMIN_DOSSIER_TEST = '../../dataset_autocollant/test/images'
 
 if __name__ == '__main__':
     print("[IA] Chargement du modèle YOLOv8-Pose (Nano)...")
     # On charge le tout petit modèle de base "nano"
     model = YOLO('yolov8n-pose.pt') 
 
-    print("[IA] Lancement de l'entraînement...")
+    print("[IA] Lancement de l'entraînement avec le dataset Roboflow...")
     results = model.train(
-        data='../../dataset_autocollant/data.yaml', 
-        epochs=500,
-        imgsz=1024,      
+        data=CHEMIN_DATA_YAML, 
+        epochs=50,
+        imgsz=1024,
         batch=6,
         device='cpu',
         
-        # On désactive la géométrie et les transformations pour se concentrer sur l'apprentissage des points clés
+        # Vu que Roboflow a potentiellement déjà fait de la Data Augmentation (génération), 
+        # on désactive celles de YOLO pour éviter de "casser" les points clés
         fliplr=0.0,
         flipud=0.0,
         mosaic=0.0,
@@ -27,10 +35,10 @@ if __name__ == '__main__':
     )
     
     # ==========================================
-    # LE TABLEAU DE BORD DES RÉSULTATS AVANCÉ
+    # LE TABLEAU DE BORD DES RÉSULTATS
     # ==========================================
     print("\n" + "="*60)
-    print("Résumer des performances du modèle :")
+    print("Résumé des performances du modèle :")
     print("="*60)
     
     chemin_best_pt = f"{results.save_dir}/weights/best.pt"
@@ -42,11 +50,11 @@ if __name__ == '__main__':
     pose_map50 = results.pose.map50 * 100
     pose_map95 = results.pose.map * 100
 
-    print("=== Détection Globale ===")
+    print("=== Détection Globale (Boîte) ===")
     print(f"Score Global (Tolérance 50%)             : {box_map50:.1f} %")
     print(f"Score Strict (Tolérance 50-95%)          : {box_map95:.1f} %\n")
 
-    print("=== Détection des 4 Coins ===")
+    print("=== Détection des 4 Coins (Pose) ===")
     print(f"Score Global (Tolérance 50%)             : {pose_map50:.1f} %")
     print(f"Score Strict (Tolérance 50-95%)          : {pose_map95:.1f} %\n")
     print("="*60 + "\n")
@@ -58,50 +66,42 @@ if __name__ == '__main__':
     print("Lancement du Reality Check...")
     print("="*60 + "\n")
 
-    # On charge le modèle
     best_model = YOLO(chemin_best_pt)
 
-    # On choisit une image de test
-    image_test = "../img_test/IMG_20260401_090116.jpg" 
+    # Récupération automatique de la première image du dossier test de Roboflow
+    images_test_disponibles = glob.glob(f"{CHEMIN_DOSSIER_TEST}/*.jpg")
     
-    if not os.path.exists(image_test):
-        print(f"Erreur : L'image de test {image_test} est introuvable.")
+    if len(images_test_disponibles) == 0:
+        print(f"Erreur : Aucune image .jpg trouvée dans le dossier test ({CHEMIN_DOSSIER_TEST}).")
     else:
-        print(f"[Test] Analyse de l'image : {image_test}")
+        image_test = images_test_disponibles[0]
+        print(f"[Test] Analyse de l'image issue du dataset de test : {image_test}")
         
-        # L'IA regarde l'image et fait sa prédiction
         predictions = best_model.predict(
             source=image_test, 
-            conf = 0.5,     # On lui demande d'être sûre à au moins 50%
-            show = False,
-            save = True     # Va sauvegarder l'image résultat dans le dossier 'runs/pose/predict'
+            conf=0.5,
+            show=False,
+            save=True
         )
 
-        # On extrait les données mathématiques de la première image analysée
         resultat_ia = predictions[0]
 
         if len(resultat_ia.boxes) > 0:
             print("\nAutocollant détecté ! Extraction des points...")
             
-            # On récupère les limites strictes de la boîte englobante [x_min, y_min, x_max, y_max]
             boite = resultat_ia.boxes.xyxy[0].cpu().numpy()
             x_min, y_min, x_max, y_max = boite
             
             points_cles = resultat_ia.keypoints.data[0].cpu().numpy() 
-            
-            # Calcul de la confiance moyenne des points clés (en %) pour évaluer la fiabilité de la prédiction
-            # La colonne 2 contient les confiances de chaque point
             confiance_moyenne = np.mean(points_cles[:, 2]) * 100
             
             points_finaux = []
             
-            # Choix de la stratégie en fonction de la confiance moyenne des points clés
             if confiance_moyenne >= 80.0:
                 print(f"\n[Succès] Confiance élevée ({confiance_moyenne:.1f}%). Utilisation des points de l'IA :")
                 for i, point in enumerate(points_cles):
                     x, y, confiance = point
 
-                    # Filet de sécurité classique
                     x_securise = np.clip(x, x_min, x_max)
                     y_securise = np.clip(y, y_min, y_max)
                     
@@ -109,12 +109,11 @@ if __name__ == '__main__':
                     print(f" -> Point {i+1} : X={int(x_securise)}, Y={int(y_securise)} (Sûr à {confiance*100:.1f}%)")
             else:
                 print(f"\n[Sécurité] Confiance trop faible ({confiance_moyenne:.1f}% < 80%). Utilisation des coins de la boîte :")
-                # On crée les 4 coins parfaits du rectangle de la Bounding Box
                 points_finaux = [
-                    [x_min, y_min], # Haut-Gauche
-                    [x_max, y_min], # Haut-Droit
-                    [x_max, y_max], # Bas-Droit
-                    [x_min, y_max]  # Bas-Gauche
+                    [x_min, y_min],
+                    [x_max, y_min],
+                    [x_max, y_max],
+                    [x_min, y_max] 
                 ]
                 
                 noms = ["Haut-Gauche", "Haut-Droit", "Bas-Droit", "Bas-Gauche"]
