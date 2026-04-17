@@ -1,2 +1,2 @@
 - Export un modèle en .tflite
-yolo export model=src/runs/pose/train/weights/best.pt format=tflite imgsz=1024 optimize=True
+yolo export model=src/runs/pose/train3/weights/best.pt format=tflite imgsz=1024 optimize=True

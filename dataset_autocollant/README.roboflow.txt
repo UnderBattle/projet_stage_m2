@@ -1,8 +1,8 @@
 
-Detection_autocollant - v2 2026-04-16 10:47am
+Detection_autocollant - v3 2026-04-17 9:49am
 ==============================
 
-This dataset was exported via roboflow.com on April 16, 2026 at 8:47 AM GMT
+This dataset was exported via roboflow.com on April 17, 2026 at 7:49 AM GMT
 
 Roboflow is an end-to-end computer vision platform that helps you
 * collaborate with your team on computer vision projects
@@ -22,7 +22,7 @@ Detection_autocollant are annotated in YOLOv8 format.
 
 The following pre-processing was applied to each image:
 * Auto-orientation of pixel data (with EXIF-orientation stripping)
-* Resize to 640x640 (Stretch)
+* Resize to 1024x1024 (Stretch)
 
 The following augmentation was applied to create 3 versions of each source image:
 * Random brigthness adjustment of between -25 and +25 percent

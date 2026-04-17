@@ -36,7 +36,7 @@ Future<String?> _redimensionnerImageLourde(String imagePath) async {
     // Si l'image est plus grande que du 1920, on la réduit
     int maxSize = 1920; 
     if (image.width > maxSize || image.height > maxSize) {
-      print("Optimisation : L'image est trop grande (${image.width}x${image.height}). Redimensionnement...");
+      print("[Optimisation] L'image est trop grande (${image.width}x${image.height}). Redimensionnement...");
       
       // On conserve les proportions (Aspect Ratio)
       img.Image resized;
@@ -53,12 +53,12 @@ Future<String?> _redimensionnerImageLourde(String imagePath) async {
       
       // Encodage en JPEG (Qualité 90 pour garder les détails)
       await newFile.writeAsBytes(img.encodeJpg(resized, quality: 90));
-      print("Optimisation : Nouvelle taille ${resized.width}x${resized.height} prête !");
+      print("[Optimisation] Nouvelle taille ${resized.width}x${resized.height} prête !");
       return path;
     }
     
     // Si l'image est déjà petite, on ne touche à rien
-    print("Optimisation : Taille correcte (${image.width}x${image.height}), pas de changement.");
+    print("[Optimisation] Taille correcte (${image.width}x${image.height}), pas de changement.");
     return imagePath;
     
   } catch (e) {
@@ -326,18 +326,18 @@ class _EcranResultatState extends State<EcranResultat> {
   
   String? _modeleSelectionneChemin;
 
-  bool _isProcessing = true; 
+  bool _isProcessing = true;
   Interpreter? _iaModel;
   
-  Uint8List? _imageResultatBytes; 
-  Uint8List? _imageFondPropreBytes; 
+  Uint8List? _imageResultatBytes;
+  Uint8List? _imageFondPropreBytes;
 
   int? _imageWidth;
   int? _imageHeight;
-  List<Map<String, double>>? _pointsCibles; 
-  double _decalageX = 0.0; 
-  double _decalageY = 0.0; 
-  bool _isDragging = false; 
+  List<Map<String, double>>? _pointsCibles;
+  double _decalageX = 0.0;
+  double _decalageY = 0.0;
+  bool _isDragging = false;
 
   @override
   void initState() {
@@ -356,7 +356,7 @@ class _EcranResultatState extends State<EcranResultat> {
       _iaModel = await Interpreter.fromAsset('assets/best.tflite');
       await _analyserImage();
     } catch (e) {
-      print("[IA] ERREUR FATALE AU DÉMARRAGE : $e");
+      print("[IA - ERREUR FATALE] Échec au chargement du modèle : $e");
       setState(() => _isProcessing = false);
     }
   }
@@ -365,12 +365,15 @@ class _EcranResultatState extends State<EcranResultat> {
     if (_iaModel == null) return;
 
     try {
-      print("\n[IA] === DÉBUT DE L'ANALYSE AUTOMATIQUE AVEC ISOLATES ===");
+      print("\n=======================================================");
+      print("[IA] DÉBUT DE L'ANALYSE TFLITE");
+      print("=======================================================");
 
       final imageBytes = await File(widget.photoPath).readAsBytes();
       var inputShape = _iaModel!.getInputTensor(0).shape;
       bool isNHWC = inputShape[3] == 3;
       
+      print("[IA] Préparation de la matrice (IsNHWC: $isNHWC)...");
       final resultMatrixPrep = await compute(prepareImageMatrixForIA, {
         'bytes': imageBytes,
         'isNHWC': isNHWC
@@ -380,15 +383,18 @@ class _EcranResultatState extends State<EcranResultat> {
 
       _imageWidth = resultMatrixPrep['width'];
       _imageHeight = resultMatrixPrep['height'];
+      print("[IA] Image décodée. Dimensions originales: ${_imageWidth}x${_imageHeight}");
+      
       var inputMatrix = resultMatrixPrep['matrix'];
 
       var outputShape = _iaModel!.getOutputTensor(0).shape;
-      var outputMatrix = List.generate(outputShape[0], (i) => 
-        List.generate(outputShape[1], (j) => 
+      var outputMatrix = List.generate(outputShape[0], (i) =>
+        List.generate(outputShape[1], (j) =>
           List.generate(outputShape[2], (k) => 0.0)
         )
       );
 
+      print("[IA] Exécution du modèle (Run)...");
       _iaModel!.run(inputMatrix, outputMatrix);
 
       double maxConfiance = 0;
@@ -405,17 +411,22 @@ class _EcranResultatState extends State<EcranResultat> {
         }
       }
 
-      if (maxConfiance > 0.5) { 
+      print("[IA] Meilleure détection trouvée - Confiance Boîte: ${(maxConfiance * 100).toStringAsFixed(2)}% (Index: $meilleurIndex)");
+
+      if (maxConfiance > 0.5) {
         double boxX = isTransposed ? outputMatrix[0][meilleurIndex][0] : outputMatrix[0][0][meilleurIndex];
         double boxY = isTransposed ? outputMatrix[0][meilleurIndex][1] : outputMatrix[0][1][meilleurIndex];
         double boxW = isTransposed ? outputMatrix[0][meilleurIndex][2] : outputMatrix[0][2][meilleurIndex];
         double boxH = isTransposed ? outputMatrix[0][meilleurIndex][3] : outputMatrix[0][3][meilleurIndex];
         
         double scale = (boxW < 2.0 && boxH < 2.0) ? 1024.0 : 1.0;
+        print("[IA] Bounding Box (avant scale) : X=${boxX.toStringAsFixed(2)}, Y=${boxY.toStringAsFixed(2)}, W=${boxW.toStringAsFixed(2)}, H=${boxH.toStringAsFixed(2)}");
+        print("[IA] Facteur de Scale appliqué : $scale");
 
         List<Map<String, double>> rawPoints = [];
         double confMoyennePoints = 0;
 
+        print("[IA] Extraction des 4 Keypoints (Pose) :");
         for(int point = 0; point < 4; point++) {
            int idxX = 5 + (point * 3);
            int idxY = idxX + 1;
@@ -427,31 +438,40 @@ class _EcranResultatState extends State<EcranResultat> {
            
            confMoyennePoints += pConf;
            rawPoints.add({'x': px * scale, 'y': py * scale});
+           
+           print("  -> Point ${point + 1} : X=${(px * scale).toStringAsFixed(1)}, Y=${(py * scale).toStringAsFixed(1)} | Confiance: ${(pConf * 100).toStringAsFixed(1)}%");
         }
 
         confMoyennePoints = confMoyennePoints / 4.0;
+        print("[IA] Confiance moyenne des 4 points : ${(confMoyennePoints * 100).toStringAsFixed(2)}%");
 
-        if (confMoyennePoints >= 0.8) {
+        if (confMoyennePoints >= 0.90) {
+          print("[IA] VALIDATION: Confiance > 90%. Utilisation des points de l'IA.");
           _pointsCibles = TraitementImage.trierPoints(rawPoints);
         } else {
+          print("[IA] FALLBACK: Confiance < 90%. Utilisation des coins de la Bounding Box.");
           double xMin = (boxX * scale) - (boxW * scale) / 2;
           double yMin = (boxY * scale) - (boxH * scale) / 2;
           double xMax = (boxX * scale) + (boxW * scale) / 2;
           double yMax = (boxY * scale) + (boxH * scale) / 2;
 
           _pointsCibles = [
-            {'x': xMin, 'y': yMin}, 
-            {'x': xMax, 'y': yMin}, 
-            {'x': xMax, 'y': yMax}, 
-            {'x': xMin, 'y': yMax}  
+            {'x': xMin, 'y': yMin},
+            {'x': xMax, 'y': yMin},
+            {'x': xMax, 'y': yMax},
+            {'x': xMin, 'y': yMax} 
           ];
         }
 
+        print("[IA] Points finaux cibles pour OpenCV : $_pointsCibles");
+
         if (_pointsCibles != null) {
+           print("[OpenCV] Envoi vers Isolate pour effacer l'autocollant (Fond Propre)...");
            _imageFondPropreBytes = await compute(TraitementImage.effacerAutocollantIsolate, {
              'photoPath': widget.photoPath,
              'pointsIA': _pointsCibles!,
            });
+           print("[OpenCV] Fond Propre généré avec succès.");
         }
 
         setState(() {
@@ -459,14 +479,15 @@ class _EcranResultatState extends State<EcranResultat> {
         });
 
       } else {
+        print("[IA] ÉCHEC: Aucune boîte détectée avec confiance > 50%. (Max=$maxConfiance)");
         setState(() {
-          _pointsCibles = null; 
+          _pointsCibles = null;
           _isProcessing = false;
         });
       }
 
     } catch (e) {
-      print("[IA] ERREUR : $e");
+      print("[IA - ERREUR] Exception durant l'analyse : $e");
       setState(() {
         _pointsCibles = null;
         _isProcessing = false;
@@ -480,11 +501,18 @@ class _EcranResultatState extends State<EcranResultat> {
     setState(() => _isProcessing = true);
 
     try {
+      print("\n=======================================================");
+      print("[UI/OpenCV] LANCEMENT DE L'INCRUSTATION TOTALE");
+      print("=======================================================");
       String climPath = _modeleSelectionneChemin!;
+      
+      print("[UI/OpenCV] Modèle sélectionné : $climPath");
+      print("[UI/OpenCV] Décalage utilisateur : X=${_decalageX.toStringAsFixed(2)}, Y=${_decalageY.toStringAsFixed(2)}");
       
       final ByteData data = await DefaultAssetBundle.of(context).load(climPath);
       Uint8List climBytes = data.buffer.asUint8List();
 
+      print("[UI/OpenCV] Envoi des données vers TraitementImage.incrusterClimatisationIsolate...");
       Uint8List? resultImage = await compute(TraitementImage.incrusterClimatisationIsolate, {
         'photoPath': widget.photoPath,
         'climBytes': climBytes,
@@ -495,12 +523,15 @@ class _EcranResultatState extends State<EcranResultat> {
       });
 
       if (resultImage != null) {
+        print("[UI/OpenCV] Image finale générée et reçue avec succès.");
         setState(() {
           _imageResultatBytes = resultImage;
         });
+      } else {
+        print("[UI/OpenCV - ERREUR] L'isolate a retourné une image nulle.");
       }
     } catch (e) {
-      print("[Incrustation] ERREUR : $e");
+      print("[UI/OpenCV - ERREUR] Exception pendant l'incrustation : $e");
     } finally {
       setState(() => _isProcessing = false);
     }

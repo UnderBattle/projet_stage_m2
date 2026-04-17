@@ -3,6 +3,8 @@ import os
 import glob
 import numpy as np
 
+IMGSZ = 1024
+
 # ==========================================
 # CONFIGURATION DES CHEMINS
 # ==========================================
@@ -18,7 +20,7 @@ if __name__ == '__main__':
     results = model.train(
         data=CHEMIN_DATA_YAML, 
         epochs=50,
-        imgsz=1024,
+        imgsz=IMGSZ,
         batch=6,
         device='cpu',
         
@@ -30,8 +32,8 @@ if __name__ == '__main__':
         degrees=0.0,
         
         # Pénalité de l'absence de détection (box) et de points clés (pose)
-        pose=30.0,
-        box=5.0
+        pose=35.0,
+        box=10.0
     )
     
     # ==========================================
@@ -97,7 +99,7 @@ if __name__ == '__main__':
             
             points_finaux = []
             
-            if confiance_moyenne >= 80.0:
+            if confiance_moyenne >= 95.0:
                 print(f"\n[Succès] Confiance élevée ({confiance_moyenne:.1f}%). Utilisation des points de l'IA :")
                 for i, point in enumerate(points_cles):
                     x, y, confiance = point
@@ -108,7 +110,7 @@ if __name__ == '__main__':
                     points_finaux.append([x_securise, y_securise])
                     print(f" -> Point {i+1} : X={int(x_securise)}, Y={int(y_securise)} (Sûr à {confiance*100:.1f}%)")
             else:
-                print(f"\n[Sécurité] Confiance trop faible ({confiance_moyenne:.1f}% < 80%). Utilisation des coins de la boîte :")
+                print(f"\n[Sécurité] Confiance trop faible ({confiance_moyenne:.1f}% < 95%). Utilisation des coins de la boîte :")
                 points_finaux = [
                     [x_min, y_min],
                     [x_max, y_min],
@@ -126,3 +128,20 @@ if __name__ == '__main__':
         else:
             print("\nAucun autocollant détecté sur cette image.")
             print("L'IA n'est pas encore assez entraînée ou l'image est trop compliquée.")
+
+    # ==========================================
+    # EXPORTATION AUTOMATIQUE EN TFLITE
+    # ==========================================
+    print("\n" + "="*60)
+    print("Exportation du modèle au format TFLite pour Flutter...")
+    print("="*60 + "\n")
+    
+    try:
+        fichier_export = best_model.export(
+            format='tflite',
+            imgsz=IMGSZ,
+            optimize=True
+        )
+        print(f"\n[Succès] Modèle exporté avec succès ! Fichier disponible ici : {fichier_export}")
+    except Exception as e:
+        print(f"\n[Erreur] L'exportation a échoué : {e}")

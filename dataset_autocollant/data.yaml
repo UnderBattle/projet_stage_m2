@@ -11,6 +11,6 @@ names: ['autocollant']
 roboflow:
   workspace: underbattles-workspace
   project: detection_autocollant
-  version: 2
+  version: 3
   license: CC BY 4.0
-  url: https://universe.roboflow.com/underbattles-workspace/detection_autocollant/dataset/2
+  url: https://universe.roboflow.com/underbattles-workspace/detection_autocollant/dataset/3
