@@ -1,5 +1,4 @@
 from ultralytics import YOLO
-import os
 import glob
 import numpy as np
 
@@ -24,16 +23,15 @@ if __name__ == '__main__':
         batch=6,
         device='cpu',
         
-        # Vu que Roboflow a potentiellement déjà fait de la Data Augmentation (génération), 
-        # on désactive celles de YOLO pour éviter de "casser" les points clés
+        # Vu que Roboflow a déjà fait de la Data Augmentation, on désactive celles de YOLO
         fliplr=0.0,
         flipud=0.0,
         mosaic=0.0,
         degrees=0.0,
         
-        # Pénalité de l'absence de détection (box) et de points clés (pose)
+        # Pénalité de l'absence de détection (box) et des points clés (pose)
         pose=35.0,
-        box=10.0
+        box=15.0
     )
     
     # ==========================================

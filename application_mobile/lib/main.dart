@@ -383,7 +383,7 @@ class _EcranResultatState extends State<EcranResultat> {
 
       _imageWidth = resultMatrixPrep['width'];
       _imageHeight = resultMatrixPrep['height'];
-      print("[IA] Image décodée. Dimensions originales: ${_imageWidth}x${_imageHeight}");
+      print("[IA] Image décodée. Dimensions originales: ${_imageWidth}x$_imageHeight");
       
       var inputMatrix = resultMatrixPrep['matrix'];
 
@@ -445,11 +445,11 @@ class _EcranResultatState extends State<EcranResultat> {
         confMoyennePoints = confMoyennePoints / 4.0;
         print("[IA] Confiance moyenne des 4 points : ${(confMoyennePoints * 100).toStringAsFixed(2)}%");
 
-        if (confMoyennePoints >= 0.90) {
-          print("[IA] VALIDATION: Confiance > 90%. Utilisation des points de l'IA.");
+        if (confMoyennePoints >= 0.92) {
+          print("[IA] VALIDATION: Confiance > 92%. Utilisation des points de l'IA.");
           _pointsCibles = TraitementImage.trierPoints(rawPoints);
         } else {
-          print("[IA] FALLBACK: Confiance < 90%. Utilisation des coins de la Bounding Box.");
+          print("[IA] FALLBACK: Confiance < 92%. Utilisation des coins de la Bounding Box.");
           double xMin = (boxX * scale) - (boxW * scale) / 2;
           double yMin = (boxY * scale) - (boxH * scale) / 2;
           double xMax = (boxX * scale) + (boxW * scale) / 2;

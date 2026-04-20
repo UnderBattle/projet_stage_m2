@@ -39,7 +39,7 @@ class TraitementImage {
   }
 
   // ==========================================
-  // 1. FOND PROPRE (OPTIMISÉ)
+  // 1. FOND PROPRE (OPTIMISÉ AVEC DÉGRADÉ LUMINEUX)
   // ==========================================
   static Future<Uint8List?> effacerAutocollant({
     required String photoPath,
@@ -61,19 +61,35 @@ class TraitementImage {
       cv.fillPoly(maskGeo, cv.VecVecPoint.fromList([ptsOri]), cv.Scalar.all(255));
 
       cv.Mat kernelDilate = cv.Mat.ones(15, 15, cv.MatType.CV_8UC1);
-      cv.Mat maskMurExt = cv.dilate(maskGeo, kernelDilate, iterations: 1);
-      cv.Mat maskBagueMur = cv.subtract(maskMurExt, maskGeo);
-
-      cv.Scalar couleurMoyenneMur = cv.mean(murMat, mask: maskBagueMur);
+      cv.Mat maskTransition = cv.dilate(maskGeo, kernelDilate, iterations: 2);
+      // Préserve la texture (papier peint, motifs, crépi) en clonant une zone voisine
+      cv.Rect rect = cv.boundingRect(cv.VecPoint.fromList(ptsOri));
       
-      cv.Mat murBase = murMat.clone();
-      cv.fillPoly(murBase, cv.VecVecPoint.fromList([ptsOri]), couleurMoyenneMur);
+      // On élargit de 20px pour englober la dilatation du masque de transition
+      int padding = 20;
+      int rectX = math.max(0, rect.x - padding);
+      int rectY = math.max(0, rect.y - padding);
+      int rectW = math.min(wMur - rectX, rect.width + padding * 2);
+      int rectH = math.min(hMur - rectY, rect.height + padding * 2);
 
-      cv.Mat smallMur = cv.resize(murBase, (wMur ~/ 4, hMur ~/ 4));
-      cv.Mat smallFlou = cv.gaussianBlur(smallMur, (21, 21), 0.0); 
-      cv.Mat murFlou = cv.resize(smallFlou, (wMur, hMur));
+      int srcX = rectX;
+      int srcY = rectY;
 
-      cv.Mat maskTransition = cv.dilate(maskGeo, kernelDilate, iterations: 2); 
+      // Recherche d'une zone source sans autocollant
+      if (rectY - rectH > 0) {
+        srcY = rectY - rectH; // On clone un patch au-dessus
+      } else if (rectY + rectH * 2 < hMur) {
+        srcY = rectY + rectH; // On clone un patch en dessous
+      } else if (rectX - rectW > 0) {
+        srcX = rectX - rectW; // On clone un patch à gauche
+      } else if (rectX + rectW * 2 < wMur) {
+        srcX = rectX + rectW; // On clone un patch à droite
+      }
+
+      cv.Mat murRepare = murMat.clone();
+      cv.Mat patch = murMat.region(cv.Rect(srcX, srcY, rectW, rectH));
+      patch.copyTo(murRepare.region(cv.Rect(rectX, rectY, rectW, rectH)));
+
       cv.Mat smallMask = cv.resize(maskTransition, (wMur ~/ 4, hMur ~/ 4));
       cv.Mat smallMaskFlou = cv.gaussianBlur(smallMask, (13, 13), 0.0);
       cv.Mat maskFeather8u = cv.resize(smallMaskFlou, (wMur, hMur));
@@ -85,11 +101,11 @@ class TraitementImage {
       cv.Mat invMaskFeather3c = cv.cvtColor(invMaskFeather8u, cv.COLOR_GRAY2BGR);
       cv.Mat invMaskFeatherF = invMaskFeather3c.convertTo(cv.MatType.CV_32FC3, alpha: 1.0 / 255.0);
 
-      cv.Mat murBaseF = murBase.convertTo(cv.MatType.CV_32FC3);
-      cv.Mat murFlouF = murFlou.convertTo(cv.MatType.CV_32FC3);
+      cv.Mat murRepareF = murRepare.convertTo(cv.MatType.CV_32FC3);
+      cv.Mat murOriginalF = murMat.convertTo(cv.MatType.CV_32FC3);
 
-      cv.Mat fgInpaint = cv.multiply(murFlouF, maskFeatherF);
-      cv.Mat bgInpaint = cv.multiply(murBaseF, invMaskFeatherF);
+      cv.Mat fgInpaint = cv.multiply(murRepareF, maskFeatherF);
+      cv.Mat bgInpaint = cv.multiply(murOriginalF, invMaskFeatherF);
       
       cv.Mat resultImgF = cv.add(fgInpaint, bgInpaint);
       cv.Mat resultImg = resultImgF.convertTo(cv.MatType.CV_8UC3);
@@ -128,19 +144,36 @@ class TraitementImage {
       cv.fillPoly(maskGeo, cv.VecVecPoint.fromList([ptsOri]), cv.Scalar.all(255));
 
       cv.Mat kernelDilate = cv.Mat.ones(15, 15, cv.MatType.CV_8UC1);
-      cv.Mat maskMurExt = cv.dilate(maskGeo, kernelDilate, iterations: 1);
-      cv.Mat maskBagueMur = cv.subtract(maskMurExt, maskGeo);
-
-      cv.Scalar couleurMoyenneMur = cv.mean(murMat, mask: maskBagueMur);
-      
-      cv.Mat murBase = murMat.clone();
-      cv.fillPoly(murBase, cv.VecVecPoint.fromList([ptsOri]), couleurMoyenneMur);
-
-      cv.Mat smallMur = cv.resize(murBase, (wMur ~/ 4, hMur ~/ 4));
-      cv.Mat smallFlou = cv.gaussianBlur(smallMur, (21, 21), 0.0);
-      cv.Mat murFlou = cv.resize(smallFlou, (wMur, hMur));
-
       cv.Mat maskTransition = cv.dilate(maskGeo, kernelDilate, iterations: 2); 
+
+      // --- NOUVELLE MÉTHODE : TAMPON DE DUPLICATION (CLONE STAMP) ---
+      // Préserve la texture (papier peint, motifs, crépi) en clonant une zone voisine
+      cv.Rect rect = cv.boundingRect(cv.VecPoint.fromList(ptsOri));
+      
+      int padding = 20;
+      int rectX = math.max(0, rect.x - padding);
+      int rectY = math.max(0, rect.y - padding);
+      int rectW = math.min(wMur - rectX, rect.width + padding * 2);
+      int rectH = math.min(hMur - rectY, rect.height + padding * 2);
+
+      int srcX = rectX;
+      int srcY = rectY;
+
+      if (rectY - rectH > 0) {
+        srcY = rectY - rectH; // Patch au-dessus
+      } else if (rectY + rectH * 2 < hMur) {
+        srcY = rectY + rectH; // Patch en dessous
+      } else if (rectX - rectW > 0) {
+        srcX = rectX - rectW; // Patch à gauche
+      } else if (rectX + rectW * 2 < wMur) {
+        srcX = rectX + rectW; // Patch à droite
+      }
+
+      cv.Mat murRepare = murMat.clone();
+      cv.Mat patch = murMat.region(cv.Rect(srcX, srcY, rectW, rectH));
+      patch.copyTo(murRepare.region(cv.Rect(rectX, rectY, rectW, rectH)));
+      // -------------------------------------------------------------
+
       cv.Mat smallMask = cv.resize(maskTransition, (wMur ~/ 4, hMur ~/ 4));
       cv.Mat smallMaskFlou = cv.gaussianBlur(smallMask, (13, 13), 0.0);
       cv.Mat maskFeather8u = cv.resize(smallMaskFlou, (wMur, hMur));
@@ -152,11 +185,11 @@ class TraitementImage {
       cv.Mat invMaskFeather3c = cv.cvtColor(invMaskFeather8u, cv.COLOR_GRAY2BGR);
       cv.Mat invMaskFeatherF = invMaskFeather3c.convertTo(cv.MatType.CV_32FC3, alpha: 1.0 / 255.0);
 
-      cv.Mat murBaseF = murBase.convertTo(cv.MatType.CV_32FC3);
-      cv.Mat murFlouF = murFlou.convertTo(cv.MatType.CV_32FC3);
+      cv.Mat murRepareF = murRepare.convertTo(cv.MatType.CV_32FC3);
+      cv.Mat murOriginalF = murMat.convertTo(cv.MatType.CV_32FC3);
 
-      cv.Mat fgInpaint = cv.multiply(murFlouF, maskFeatherF);
-      cv.Mat bgInpaint = cv.multiply(murBaseF, invMaskFeatherF);
+      cv.Mat fgInpaint = cv.multiply(murRepareF, maskFeatherF);
+      cv.Mat bgInpaint = cv.multiply(murOriginalF, invMaskFeatherF);
       
       cv.Mat resultImgF = cv.add(fgInpaint, bgInpaint);
       cv.Mat resultImg = resultImgF.convertTo(cv.MatType.CV_8UC3);
@@ -211,28 +244,23 @@ class TraitementImage {
 
       cv.Mat climWarped = cv.warpPerspective(climMat, hMatrix, (wMur, hMur));
       var channels = cv.split(climWarped);
-      cv.Mat alphaMaskOriginale = channels[3]; 
-      // Lissage des contours de la clim pour éviter l'effet "découpé au ciseau"
-      cv.Mat alphaMask = cv.gaussianBlur(alphaMaskOriginale, (3, 3), 0.0);
-      
+      cv.Mat alphaMask = channels[3]; 
       cv.Mat climBgr = cv.cvtColor(climWarped, cv.COLOR_BGRA2BGR);
       cv.Mat maskBinaire = cv.threshold(alphaMask, 5, 255, cv.THRESH_BINARY).$2;
 
-      // === PHASE 4 : L'OMBRE PORTÉE RÉALISTE (Lissée) ===
+      // === PHASE 4 : L'OMBRE PORTÉE RÉALISTE ===
       List<cv.Point> ptsDstOmbre = ptsDstLisses.map((pt) => cv.Point(pt.x + 10, pt.y + 20)).toList();
       cv.Mat hMatrixOmbre = cv.getPerspectiveTransform(vecPtsSrc, cv.VecPoint.fromList(ptsDstOmbre));
       cv.Mat climWarpedOmbre = cv.warpPerspective(climMat, hMatrixOmbre, (wMur, hMur));
       cv.Mat alphaOmbre = cv.split(climWarpedOmbre)[3];
 
       cv.Mat smallAlpha = cv.resize(alphaOmbre, (wMur ~/ 4, hMur ~/ 4));
-      cv.Mat smallOmbreFloue = cv.gaussianBlur(smallAlpha, (25, 25), 0.0);
-      cv.Mat ombreFloueUpscaled = cv.resize(smallOmbreFloue, (wMur, hMur), interpolation: cv.INTER_CUBIC);
-      cv.Mat ombreFloue = cv.gaussianBlur(ombreFloueUpscaled, (11, 11), 0.0);
+      cv.Mat smallOmbreFloue = cv.gaussianBlur(smallAlpha, (15, 15), 0.0);
+      cv.Mat ombreFloue = cv.resize(smallOmbreFloue, (wMur, hMur));
 
       cv.Mat grayMur = cv.cvtColor(resultImg, cv.COLOR_BGR2GRAY);
       cv.Scalar lumMurGlobal = cv.mean(grayMur);
-
-      double intensite = 0.08 + (lumMurGlobal.val[0] / 255.0) * 0.20;
+      double intensite = 0.05 + (lumMurGlobal.val[0] / 255.0) * 0.20;
 
       cv.Mat ombre8u = ombreFloue.convertTo(cv.MatType.CV_8UC1, alpha: intensite);
       cv.Mat invOmbre8u = cv.bitwiseNOT(ombre8u);
@@ -246,17 +274,17 @@ class TraitementImage {
 
       // === PHASE 5 : LUMIÈRE ET TEMPÉRATURE DE COULEUR (AVEC CONTRASTE)
       
-      // 1. Analyse de la couleur ambiante sous la clim (BGR)
+      // Analyse de la couleur ambiante sous la clim (BGR)
       cv.Scalar meanMurSousClim = cv.mean(murOmbre, mask: maskBinaire);
       double bMur = meanMurSousClim.val[0];
       double gMur = meanMurSousClim.val[1];
       double rMur = meanMurSousClim.val[2];
 
-      // 2. Calcul de la luminosité absolue (Luma Rec.601)
+      // Calcul de la luminosité absolue (Luma Rec.601)
       double lumMur = (0.114 * bMur) + (0.587 * gMur) + (0.299 * rMur);
       lumMur = math.max(lumMur, 1.0); 
 
-      // 3. Extraction de la Teinte pure (Neutralisation des noirs)
+      // Extraction de la Teinte pure (Neutralisation des noirs)
       double tintB = bMur / lumMur;
       double tintG = gMur / lumMur;
       double tintR = rMur / lumMur;
@@ -285,18 +313,14 @@ class TraitementImage {
       cv.Mat climHsv = cv.cvtColor(climTinted, cv.COLOR_BGR2HSV);
       var hsvChannels = cv.split(climHsv);
       
-      // MATCHING DE CONTRASTE
-      // On cherche le pixel le plus sombre de la pièce
+      // --- MATCHING DE CONTRASTE (NIVEAU DES NOIRS) ---
       var minMaxMur = cv.minMaxLoc(grayMur);
       double niveauNoirMur = minMaxMur.$1; 
       
-      // On limite le noir max pour ne pas transformer la clim en un bloc gris brumeux
       niveauNoirMur = math.min(niveauNoirMur, 45.0); 
 
-      // On ajuste le multiplicateur pour compenser l'ajout de lumière dans les zones noires
       double ratioContraste = ratioAdouci * ((255.0 - niveauNoirMur) / 255.0);
       
-      // On multiplie la lumière et on ajoute le niveau de noir d'ambiance
       cv.Mat vScaled = cv.addWeighted(hsvChannels[2], ratioContraste, hsvChannels[2], 0.0, niveauNoirMur);
       hsvChannels[2] = vScaled;
 
