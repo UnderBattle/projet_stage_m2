@@ -1,6 +1,8 @@
 import 'dart:typed_data';
 import 'dart:math' as math;
 import 'package:opencv_dart/opencv_dart.dart' as cv;
+import 'package:tflite_flutter/tflite_flutter.dart';
+import 'package:image/image.dart' as img;
 
 class TraitementImage {
 
@@ -10,8 +12,10 @@ class TraitementImage {
     return await effacerAutocollant(
       photoPath: params['photoPath'] as String,
       pointsIA: (params['pointsIA'] as List).map((e) => Map<String, double>.from(e)).toList(),
+      lamaBytes: params['lamaBytes'] as Uint8List?, // NOUVEAU
     );
   }
+  
   static Future<Uint8List?> incrusterClimatisationIsolate(Map<String, dynamic> params) async {
     return await incrusterClimatisation(
       photoPath: params['photoPath'] as String,
@@ -20,6 +24,7 @@ class TraitementImage {
       decalageX: params['decalageX'] as double,
       decalageY: params['decalageY'] as double,
       climAssetPath: params['climAssetPath'] as String,
+      lamaBytes: params['lamaBytes'] as Uint8List?, // NOUVEAU
     );
   }
   
@@ -37,11 +42,11 @@ class TraitementImage {
     return [hg, hd, bd, bg];
   }
 
-  /// Efface l'autocollant de l'image du mur en utilisant une technique de clonage.
-  /// Cette fonction est conçue pour être exécutée dans un Isolate pour ne pas bloquer l'UI.
+  /// Efface l'autocollant de l'image du mur en utilisant LaMa Inpainting (ou clonage en secours).
   static Future<Uint8List?> effacerAutocollant({
     required String photoPath,
     required List<Map<String, double>> pointsIA,
+    required Uint8List? lamaBytes,
   }) async {
     try {
       cv.Mat murMat = cv.imread(photoPath, flags: cv.IMREAD_COLOR);
@@ -61,48 +66,163 @@ class TraitementImage {
       cv.Mat maskGeo = cv.Mat.zeros(hMur, wMur, cv.MatType.CV_8UC1);
       cv.fillPoly(maskGeo, cv.VecVecPoint.fromList([ptsOri]), cv.Scalar.all(255));
 
+      // NOUVEAU : DILATATION POUR L'IA (On gonfle le masque avec une marge de 25px pour avaler les bords verts)
+      cv.Mat kernelLama = cv.Mat.ones(25, 25, cv.MatType.CV_8UC1);
+      cv.Mat maskLama = cv.dilate(maskGeo, kernelLama, iterations: 1); 
+
       // Épaissit légèrement le masque pour assurer une couverture complète.
       cv.Mat kernelDilate = cv.Mat.ones(15, 15, cv.MatType.CV_8UC1);
-      cv.Mat maskTransition = cv.dilate(maskGeo, kernelDilate, iterations: 2);
+      cv.Mat maskTransition = cv.dilate(maskLama, kernelDilate, iterations: 2);
       
       // Calcule le rectangle qui entoure l'autocollant.
       cv.Rect rect = cv.boundingRect(cv.VecPoint.fromList(ptsOri));
       
-      // Ajoute une marge de sécurité autour du rectangle.
-      int padding = 20;
-      int rectX = math.max(0, rect.x - padding);
-      int rectY = math.max(0, rect.y - padding);
-      int rectW = math.min(wMur - rectX, rect.width + padding * 2);
-      int rectH = math.min(hMur - rectY, rect.height + padding * 2);
+      cv.Mat murRepare = murMat.clone();
+      bool inpaintingReussi = false;
 
-      int srcX = rectX;
-      int srcY = rectY;
+      // =========================================================================
+      // === PHASE 1 : EFFACEMENT DU DEFAUT (LAMA INPAINTING ou CLONE STAMP) =====
+      // =========================================================================
 
-      // Trouve une zone source à proximité pour cloner et remplacer l'autocollant.
-      if (rectY - rectH > 0) {
-        srcY = rectY - rectH; 
-      } else if (rectY + rectH * 2 < hMur) {
-        srcY = rectY + rectH; 
-      } else if (rectX - rectW > 0) {
-        srcX = rectX - rectW; 
-      } else if (rectX + rectW * 2 < wMur) {
-        srcX = rectX + rectW; 
+      // TENTATIVE AVEC IA (LaMa)
+      if (lamaBytes != null) {
+        try {
+          print("[IA Inpainting] Démarrage de l'analyse LaMa...");
+          
+          // 1. Découpage d'un carré large autour de l'autocollant (pour donner du contexte à l'IA)
+          int cropS = (math.max(rect.width, rect.height) * 2.2).toInt();
+          int cropX = (rect.x + rect.width / 2 - cropS / 2).toInt();
+          int cropY = (rect.y + rect.height / 2 - cropS / 2).toInt();
+          
+          // Sécurisation des bords
+          if (cropX < 0) cropX = 0;
+          if (cropY < 0) cropY = 0;
+          if (cropX + cropS > wMur) cropX = wMur - cropS;
+          if (cropY + cropS > hMur) cropY = hMur - cropS;
+          if (cropS > wMur) cropS = wMur;
+          if (cropS > hMur) cropS = hMur;
+
+          cv.Rect cropRect = cv.Rect(cropX, cropY, cropS, cropS);
+          cv.Mat cropImg = murMat.region(cropRect).clone(); // CLONE indispensable pour ne pas altérer l'original
+          cv.Mat cropMaskLama = maskLama.region(cropRect);
+
+          // =================================================================================
+          // L'ASTUCE OPENCV + LAMA : On détruit l'autocollant vert AVANT le redimensionnement
+          // =================================================================================
+          cv.Mat invCropMask = cv.bitwiseNOT(cropMaskLama);
+          cv.Scalar couleurMoyenne = cv.mean(cropImg, mask: invCropMask);
+          
+          // OpenCV remplace le vert par la couleur moyenne du mur. 
+          // Ainsi, le vert ne bave pas dans les pixels sains pendant le cv.resize() !
+          cropImg.setTo(couleurMoyenne, mask: cropMaskLama);
+          // =================================================================================
+
+          // 2. Redimensionnement au standard LaMa (512x512)
+          cv.Mat img512 = cv.resize(cropImg, (512, 512));
+          cv.Mat mask512 = cv.resize(cropMaskLama, (512, 512));
+          
+          // LaMa exige du RGB, OpenCV utilise du BGR
+          cv.Mat imgRGB = cv.cvtColor(img512, cv.COLOR_BGR2RGB);
+
+          Uint8List rgbBytes = imgRGB.data;
+          Uint8List maskBytes = mask512.data;
+
+          // 3. Préparation des tenseurs pour TFLite
+          var inputImg = List.generate(1, (i) => List.generate(512, (j) => List.generate(512, (k) => List.generate(3, (l) => 0.0))));
+          var inputMask = List.generate(1, (i) => List.generate(512, (j) => List.generate(512, (k) => List.generate(1, (l) => 0.0))));
+
+          int idx = 0;
+          for (int y = 0; y < 512; y++) {
+            for (int x = 0; x < 512; x++) {
+              inputImg[0][y][x][0] = rgbBytes[idx] / 255.0;     // R
+              inputImg[0][y][x][1] = rgbBytes[idx+1] / 255.0;   // G
+              inputImg[0][y][x][2] = rgbBytes[idx+2] / 255.0;   // B
+              
+              inputMask[0][y][x][0] = maskBytes[y * 512 + x] > 127 ? 1.0 : 0.0;
+              idx += 3;
+            }
+          }
+
+          // 4. Inférence LaMa
+          Interpreter interpreter = Interpreter.fromBuffer(lamaBytes);
+          
+          // Analyse dynamique de l'ordre d'entrée des tenseurs (Image d'abord ou Masque d'abord)
+          var tensor0 = interpreter.getInputTensor(0);
+          List<Object> inputs = (tensor0.shape.last == 3) ? [inputImg, inputMask] : [inputMask, inputImg];
+
+          var outputImg = List.generate(1, (i) => List.generate(512, (j) => List.generate(512, (k) => List.generate(3, (l) => 0.0))));
+          interpreter.runForMultipleInputs(inputs, {0: outputImg});
+
+          // 5. Reconstruction de l'image (Retour en BGR pour OpenCV)
+          Uint8List outBytes = Uint8List(512 * 512 * 3);
+          int outIdx = 0;
+          for (int y = 0; y < 512; y++) {
+            for (int x = 0; x < 512; x++) {
+              outBytes[outIdx] = (outputImg[0][y][x][2] * 255).clamp(0, 255).toInt();   // B
+              outBytes[outIdx+1] = (outputImg[0][y][x][1] * 255).clamp(0, 255).toInt(); // G
+              outBytes[outIdx+2] = (outputImg[0][y][x][0] * 255).clamp(0, 255).toInt(); // R
+              outIdx += 3;
+            }
+          }
+
+          // On passe par un encodage JPEG pour garantir une conversion robuste vers OpenCV
+          img.Image repairedImg = img.Image.fromBytes(width: 512, height: 512, bytes: outBytes.buffer, order: img.ChannelOrder.bgr);
+          Uint8List jpgBytes = img.encodeJpg(repairedImg, quality: 100);
+          cv.Mat patch512 = cv.imdecode(jpgBytes, cv.IMREAD_COLOR);
+          
+          // On remet la zone à sa taille d'origine et on la colle
+          cv.Mat patchFinal = cv.resize(patch512, (cropS, cropS));
+          patchFinal.copyTo(murRepare.region(cropRect));
+          
+          interpreter.close();
+          inpaintingReussi = true;
+          print("[IA Inpainting] LaMa a rebouché le trou avec succès !");
+          
+        } catch (e) {
+          print("[IA Inpainting] Échec de LaMa, passage au Tampon OpenCV : $e");
+        }
       }
 
-      // Applique le patch de la zone source sur la zone de l'autocollant.
-      cv.Mat murRepare = murMat.clone();
-      cv.Mat patch = murMat.region(cv.Rect(srcX, srcY, rectW, rectH));
-      patch.copyTo(murRepare.region(cv.Rect(rectX, rectY, rectW, rectH)));
+      // FALLBACK : SI L'IA N'EST PAS LA OU A PLANTE (TAMPON DE DUPLICATION)
+      if (!inpaintingReussi) {
+        int padding = 20;
+        int rectX = math.max(0, rect.x - padding);
+        int rectY = math.max(0, rect.y - padding);
+        int rectW = math.min(wMur - rectX, rect.width + padding * 2);
+        int rectH = math.min(hMur - rectY, rect.height + padding * 2);
+
+        int srcX = rectX;
+        int srcY = rectY;
+
+        if (rectY - rectH > 0) {
+          srcY = rectY - rectH; 
+        } else if (rectY + rectH * 2 < hMur) {
+          srcY = rectY + rectH; 
+        } else if (rectX - rectW > 0) {
+          srcX = rectX - rectW; 
+        } else if (rectX + rectW * 2 < wMur) {
+          srcX = rectX + rectW; 
+        }
+
+        cv.Mat patch = murMat.region(cv.Rect(srcX, srcY, rectW, rectH));
+        patch.copyTo(murRepare.region(cv.Rect(rectX, rectY, rectW, rectH)));
+      }
 
       // Crée un dégradé (feathering) sur les bords du patch pour une transition douce.
       cv.Mat smallMask = cv.resize(maskTransition, (wMur ~/ 4, hMur ~/ 4));
       cv.Mat smallMaskFlou = cv.gaussianBlur(smallMask, (13, 13), 0.0);
       cv.Mat maskFeather8u = cv.resize(smallMaskFlou, (wMur, hMur));
 
-      cv.Mat maskFeather3c = cv.cvtColor(maskFeather8u, cv.COLOR_GRAY2BGR);
+      // =================================================================================
+      // FIX ANTI-FANTÔME OPENCV : On force l'opacité à 100% au centre du masque flou.
+      // Cela garantit qu'aucun pixel de l'autocollant original ne survivra au fondu alpha !
+      // =================================================================================
+      cv.Mat maskFeatherSecurise = cv.bitwiseOR(maskFeather8u, maskLama);
+
+      cv.Mat maskFeather3c = cv.cvtColor(maskFeatherSecurise, cv.COLOR_GRAY2BGR);
       cv.Mat maskFeatherF = maskFeather3c.convertTo(cv.MatType.CV_32FC3, alpha: 1.0 / 255.0);
 
-      cv.Mat invMaskFeather8u = cv.bitwiseNOT(maskFeather8u);
+      cv.Mat invMaskFeather8u = cv.bitwiseNOT(maskFeatherSecurise);
       cv.Mat invMaskFeather3c = cv.cvtColor(invMaskFeather8u, cv.COLOR_GRAY2BGR);
       cv.Mat invMaskFeatherF = invMaskFeather3c.convertTo(cv.MatType.CV_32FC3, alpha: 1.0 / 255.0);
 
@@ -125,12 +245,14 @@ class TraitementImage {
   }
 
   /// Incruste la climatisation sur le mur en gérant la perspective, l'ombre et la lumière.
-    static Future<Uint8List?> incrusterClimatisation({
+  static Future<Uint8List?> incrusterClimatisation({
     required String photoPath,
     required Uint8List climBytes,
     required List<Map<String, double>> pointsIA,
     double decalageX = 0.0,
-    double decalageY = 0.0, required String climAssetPath,
+    double decalageY = 0.0, 
+    required String climAssetPath,
+    required Uint8List? lamaBytes, // NOUVEAU
   }) async {
     try {
       cv.Mat murMat = cv.imread(photoPath, flags: cv.IMREAD_COLOR);
@@ -150,48 +272,138 @@ class TraitementImage {
       cv.Mat maskGeo = cv.Mat.zeros(hMur, wMur, cv.MatType.CV_8UC1);
       cv.fillPoly(maskGeo, cv.VecVecPoint.fromList([ptsOri]), cv.Scalar.all(255));
 
+      // NOUVEAU : DILATATION POUR L'IA (On gonfle le masque avec une marge de 25px pour avaler les bords verts)
+      cv.Mat kernelLama = cv.Mat.ones(25, 25, cv.MatType.CV_8UC1);
+      cv.Mat maskLama = cv.dilate(maskGeo, kernelLama, iterations: 1); 
+
       // Épaissit le masque pour les transitions.
       cv.Mat kernelDilate = cv.Mat.ones(15, 15, cv.MatType.CV_8UC1);
-      cv.Mat maskTransition = cv.dilate(maskGeo, kernelDilate, iterations: 2); 
+      cv.Mat maskTransition = cv.dilate(maskLama, kernelDilate, iterations: 2); 
 
-      // Efface l'autocollant de l'image en clonant une zone voisine.
       cv.Rect rect = cv.boundingRect(cv.VecPoint.fromList(ptsOri));
-      
-      // Ajoute une marge de sécurité.
-      int padding = 20;
-      int rectX = math.max(0, rect.x - padding);
-      int rectY = math.max(0, rect.y - padding);
-      int rectW = math.min(wMur - rectX, rect.width + padding * 2);
-      int rectH = math.min(hMur - rectY, rect.height + padding * 2);
+      cv.Mat murRepare = murMat.clone();
+      bool inpaintingReussi = false;
 
-      int srcX = rectX;
-      int srcY = rectY;
+      // =========================================================================
+      // === PHASE 1 : EFFACEMENT DU DEFAUT (LAMA INPAINTING ou CLONE STAMP) =====
+      // =========================================================================
 
-      // Trouve une zone source à cloner.
-      if (rectY - rectH > 0) {
-        srcY = rectY - rectH; 
-      } else if (rectY + rectH * 2 < hMur) {
-        srcY = rectY + rectH; 
-      } else if (rectX - rectW > 0) {
-        srcX = rectX - rectW; 
-      } else if (rectX + rectW * 2 < wMur) {
-        srcX = rectX + rectW; 
+      if (lamaBytes != null) {
+        try {
+          int cropS = (math.max(rect.width, rect.height) * 2.2).toInt();
+          int cropX = (rect.x + rect.width / 2 - cropS / 2).toInt();
+          int cropY = (rect.y + rect.height / 2 - cropS / 2).toInt();
+          
+          if (cropX < 0) cropX = 0;
+          if (cropY < 0) cropY = 0;
+          if (cropX + cropS > wMur) cropX = wMur - cropS;
+          if (cropY + cropS > hMur) cropY = hMur - cropS;
+          if (cropS > wMur) cropS = wMur;
+          if (cropS > hMur) cropS = hMur;
+
+          cv.Rect cropRect = cv.Rect(cropX, cropY, cropS, cropS);
+          cv.Mat cropImg = murMat.region(cropRect).clone(); // CLONE IMPORTANT
+          cv.Mat cropMaskLama = maskLama.region(cropRect);
+
+          // =================================================================================
+          // L'ASTUCE OPENCV + LAMA : Pré-remplissage pour éviter de faire baver le vert
+          // =================================================================================
+          cv.Mat invCropMask = cv.bitwiseNOT(cropMaskLama);
+          cv.Scalar couleurMoyenne = cv.mean(cropImg, mask: invCropMask);
+          cropImg.setTo(couleurMoyenne, mask: cropMaskLama);
+          // =================================================================================
+
+          cv.Mat img512 = cv.resize(cropImg, (512, 512));
+          cv.Mat mask512 = cv.resize(cropMaskLama, (512, 512));
+          cv.Mat imgRGB = cv.cvtColor(img512, cv.COLOR_BGR2RGB);
+
+          Uint8List rgbBytes = imgRGB.data;
+          Uint8List maskBytes = mask512.data;
+
+          var inputImg = List.generate(1, (i) => List.generate(512, (j) => List.generate(512, (k) => List.generate(3, (l) => 0.0))));
+          var inputMask = List.generate(1, (i) => List.generate(512, (j) => List.generate(512, (k) => List.generate(1, (l) => 0.0))));
+
+          int idx = 0;
+          for (int y = 0; y < 512; y++) {
+            for (int x = 0; x < 512; x++) {
+              inputImg[0][y][x][0] = rgbBytes[idx] / 255.0; 
+              inputImg[0][y][x][1] = rgbBytes[idx+1] / 255.0; 
+              inputImg[0][y][x][2] = rgbBytes[idx+2] / 255.0; 
+              inputMask[0][y][x][0] = maskBytes[y * 512 + x] > 127 ? 1.0 : 0.0;
+              idx += 3;
+            }
+          }
+
+          Interpreter interpreter = Interpreter.fromBuffer(lamaBytes);
+          var tensor0 = interpreter.getInputTensor(0);
+          List<Object> inputs = (tensor0.shape.last == 3) ? [inputImg, inputMask] : [inputMask, inputImg];
+
+          var outputImg = List.generate(1, (i) => List.generate(512, (j) => List.generate(512, (k) => List.generate(3, (l) => 0.0))));
+          interpreter.runForMultipleInputs(inputs, {0: outputImg});
+
+          Uint8List outBytes = Uint8List(512 * 512 * 3);
+          int outIdx = 0;
+          for (int y = 0; y < 512; y++) {
+            for (int x = 0; x < 512; x++) {
+              outBytes[outIdx] = (outputImg[0][y][x][2] * 255).clamp(0, 255).toInt(); 
+              outBytes[outIdx+1] = (outputImg[0][y][x][1] * 255).clamp(0, 255).toInt(); 
+              outBytes[outIdx+2] = (outputImg[0][y][x][0] * 255).clamp(0, 255).toInt(); 
+              outIdx += 3;
+            }
+          }
+
+          img.Image repairedImg = img.Image.fromBytes(width: 512, height: 512, bytes: outBytes.buffer, order: img.ChannelOrder.bgr);
+          Uint8List jpgBytes = img.encodeJpg(repairedImg, quality: 100);
+          cv.Mat patch512 = cv.imdecode(jpgBytes, cv.IMREAD_COLOR);
+          
+          cv.Mat patchFinal = cv.resize(patch512, (cropS, cropS));
+          patchFinal.copyTo(murRepare.region(cropRect));
+          
+          interpreter.close();
+          inpaintingReussi = true;
+        } catch (e) {
+          print("[IA Inpainting] Échec, passage au Tampon : $e");
+        }
       }
 
-      // Applique le patch sur la zone à effacer.
-      cv.Mat murRepare = murMat.clone();
-      cv.Mat patch = murMat.region(cv.Rect(srcX, srcY, rectW, rectH));
-      patch.copyTo(murRepare.region(cv.Rect(rectX, rectY, rectW, rectH)));
+      if (!inpaintingReussi) {
+        int padding = 20;
+        int rectX = math.max(0, rect.x - padding);
+        int rectY = math.max(0, rect.y - padding);
+        int rectW = math.min(wMur - rectX, rect.width + padding * 2);
+        int rectH = math.min(hMur - rectY, rect.height + padding * 2);
+
+        int srcX = rectX;
+        int srcY = rectY;
+
+        if (rectY - rectH > 0) {
+          srcY = rectY - rectH; 
+        } else if (rectY + rectH * 2 < hMur) {
+          srcY = rectY + rectH; 
+        } else if (rectX - rectW > 0) {
+          srcX = rectX - rectW; 
+        } else if (rectX + rectW * 2 < wMur) {
+          srcX = rectX + rectW; 
+        }
+
+        cv.Mat patch = murMat.region(cv.Rect(srcX, srcY, rectW, rectH));
+        patch.copyTo(murRepare.region(cv.Rect(rectX, rectY, rectW, rectH)));
+      }
 
       // Crée un dégradé pour une transition douce entre la zone clonée et le reste de l'image.
       cv.Mat smallMask = cv.resize(maskTransition, (wMur ~/ 4, hMur ~/ 4));
       cv.Mat smallMaskFlou = cv.gaussianBlur(smallMask, (13, 13), 0.0);
       cv.Mat maskFeather8u = cv.resize(smallMaskFlou, (wMur, hMur));
 
-      cv.Mat maskFeather3c = cv.cvtColor(maskFeather8u, cv.COLOR_GRAY2BGR);
+      // =================================================================================
+      // FIX ANTI-FANTÔME OPENCV : On force l'opacité à 100% au centre.
+      // =================================================================================
+      cv.Mat maskFeatherSecurise = cv.bitwiseOR(maskFeather8u, maskLama);
+
+      cv.Mat maskFeather3c = cv.cvtColor(maskFeatherSecurise, cv.COLOR_GRAY2BGR);
       cv.Mat maskFeatherF = maskFeather3c.convertTo(cv.MatType.CV_32FC3, alpha: 1.0 / 255.0);
 
-      cv.Mat invMaskFeather8u = cv.bitwiseNOT(maskFeather8u);
+      cv.Mat invMaskFeather8u = cv.bitwiseNOT(maskFeatherSecurise);
       cv.Mat invMaskFeather3c = cv.cvtColor(invMaskFeather8u, cv.COLOR_GRAY2BGR);
       cv.Mat invMaskFeatherF = invMaskFeather3c.convertTo(cv.MatType.CV_32FC3, alpha: 1.0 / 255.0);
 
@@ -265,7 +477,9 @@ class TraitementImage {
       cv.Mat climBgr = cv.cvtColor(climWarped, cv.COLOR_BGRA2BGR);
       cv.Mat maskBinaire = cv.threshold(alphaMask, 5, 255, cv.THRESH_BINARY).$2;
 
-      // Calcule la direction de la lumière ambiante pour projeter une ombre réaliste.
+      // =========================================================================
+      // === PHASE 4 : CALCUL DE LA DIRECTION DE LA LUMIÈRE & OMBRE PROGRESSIVE ===
+      // =========================================================================
       cv.Mat grayMur = cv.cvtColor(resultImg, cv.COLOR_BGR2GRAY);
       
       // Utilise un filtre de Sobel pour détecter les gradients de lumière sur le mur.
@@ -289,7 +503,7 @@ class TraitementImage {
       double shiftX = norme < 1.0 ? 5.0 : -dirLumiereX * forceOmbre;
       double shiftY = norme < 1.0 ? 15.0 : -dirLumiereY * forceOmbre;
 
-      // Crée une ombre déformée et floutée pour un effet plus doux.
+      // Crée une ombre déformée et floutée (Directionnelle)
       List<cv.Point> ptsDstOmbre = ptsDstLisses.map((pt) {
         return cv.Point((pt.x + shiftX).toInt(), (pt.y + shiftY).toInt());
       }).toList();
@@ -300,14 +514,29 @@ class TraitementImage {
       cv.Mat smallAlpha = cv.resize(alphaOmbre, (wMur ~/ 4, hMur ~/ 4));
       cv.Mat smallOmbreFloue = cv.gaussianBlur(smallAlpha, (21, 21), 0.0);
       cv.Mat ombreFloueUpscaled = cv.resize(smallOmbreFloue, (wMur, hMur), interpolation: cv.INTER_CUBIC);
-      cv.Mat ombreFloue = cv.gaussianBlur(ombreFloueUpscaled, (15, 15), 0.0);
+      cv.Mat ombreFloueDirectionnelle = cv.gaussianBlur(ombreFloueUpscaled, (15, 15), 0.0);
+
+      // NOUVEAU : OMBRE DE CONTACT (Ambient Occlusion) pour ancrer la clim au mur (Évite l'effet PNG)
+      // On décale très légèrement vers le bas (3 pixels) avec un flou très sec pour créer le point de contact
+      List<cv.Point> ptsDstContact = ptsDstLisses.map((pt) => cv.Point(pt.x, pt.y + 3)).toList();
+      cv.Mat hMatrixContact = cv.getPerspectiveTransform(vecPtsSrc, cv.VecPoint.fromList(ptsDstContact));
+      cv.Mat climWarpedContact = cv.warpPerspective(climMat, hMatrixContact, (wMur, hMur));
+      cv.Mat alphaContact = cv.split(climWarpedContact)[3];
+      cv.Mat ombreFloueContact = cv.gaussianBlur(alphaContact, (7, 7), 0.0);
 
       // Applique l'ombre sur le mur avec une intensité basée sur la luminosité globale.
       cv.Scalar lumMurGlobal = cv.mean(grayMur);
-      double intensite = 0.08 + (lumMurGlobal.val[0] / 255.0) * 0.25;
+      
+      // On diminue un peu l'intensité directionnelle car on ajoute le contact
+      double intensiteDir = 0.06 + (lumMurGlobal.val[0] / 255.0) * 0.20;
+      double intensiteContact = 0.15; // Le contact est toujours sombre
 
-      cv.Mat ombre8u = ombreFloue.convertTo(cv.MatType.CV_8UC1, alpha: intensite);
-      cv.Mat invOmbre8u = cv.bitwiseNOT(ombre8u);
+      cv.Mat ombreDir8u = ombreFloueDirectionnelle.convertTo(cv.MatType.CV_8UC1, alpha: intensiteDir);
+      cv.Mat ombreContact8u = ombreFloueContact.convertTo(cv.MatType.CV_8UC1, alpha: intensiteContact);
+      
+      // Addition mathématique des deux ombres (le croisement des deux est plus noir)
+      cv.Mat ombreTotale = cv.add(ombreDir8u, ombreContact8u);
+      cv.Mat invOmbre8u = cv.bitwiseNOT(ombreTotale);
       cv.Mat invOmbre3c = cv.cvtColor(invOmbre8u, cv.COLOR_GRAY2BGR);
       
       cv.Mat invOmbreF = invOmbre3c.convertTo(cv.MatType.CV_32FC3, alpha: 1.0 / 255.0);
@@ -316,7 +545,14 @@ class TraitementImage {
       
       cv.Mat murOmbre = murOmbreF.convertTo(cv.MatType.CV_8UC3);
 
-      // Ajuste la couleur et la luminosité de la climatisation pour qu'elle corresponde à l'ambiance de la pièce.
+      // =========================================================================
+      // === PHASE 5 : LUMIÈRE ET TEMPÉRATURE DE COULEUR (AVEC FIX CLIM NOIRE) ===
+      // =========================================================================
+
+      // NOUVEAU : Auto-Détection de la couleur native de la climatisation (Blanche ou Noire ?)
+      cv.Scalar meanClimColorO = cv.mean(climBgr, mask: maskBinaire);
+      double lumaNativeClim = (0.114 * meanClimColorO.val[0]) + (0.587 * meanClimColorO.val[1]) + (0.299 * meanClimColorO.val[2]);
+      bool estClimNoire = lumaNativeClim < 80.0; // Seuil pour différencier le plastique blanc du plastique noir
       
       // Analyse la couleur du mur sous la clim pour teinter légèrement l'unité.
       cv.Scalar meanMurSousClim = cv.mean(murOmbre, mask: maskBinaire);
@@ -332,7 +568,8 @@ class TraitementImage {
       double tintG = gMur / lumMurLocal;
       double tintR = rMur / lumMurLocal;
 
-      double forceTeinte = 0.35; // Légèrement baissé pour préserver le blanc du plastique
+      // NOUVEAU : Une clim noire reflète la lumière (specular) mais n'absorbe pas la couleur (diffuse)
+      double forceTeinte = estClimNoire ? 0.10 : 0.35; 
       tintB = 1.0 + (tintB - 1.0) * forceTeinte;
       tintG = 1.0 + (tintG - 1.0) * forceTeinte;
       tintR = 1.0 + (tintR - 1.0) * forceTeinte;
@@ -350,8 +587,14 @@ class TraitementImage {
       double lumPiece = lumMurGlobal.val[0] / 255.0; // Ratio de 0.0 à 1.0
       
       // Ajuste la luminosité de la clim en fonction de la luminosité de la pièce.
-      // Une pièce claire garde la clim blanche, une pièce sombre l'assombrit.
-      double ratioAdouci = 0.60 + (lumPiece * 0.50); 
+      double ratioAdouci;
+      if (estClimNoire) {
+         // La clim noire doit rester sombre en base, mais monter légèrement si la pièce est inondée de lumière
+         ratioAdouci = 0.90 + (lumPiece * 0.20);
+      } else {
+         // Une pièce claire garde la clim blanche, une pièce sombre l'assombrit (ancienne logique blanche)
+         ratioAdouci = 0.60 + (lumPiece * 0.50); 
+      }
       ratioAdouci = math.max(0.40, math.min(1.1, ratioAdouci)); 
 
       // Ajuste le contraste et l'exposition de la clim pour correspondre au mur.

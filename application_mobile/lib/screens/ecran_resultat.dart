@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'package:tflite_flutter/tflite_flutter.dart';
 import 'package:image_gallery_saver_plus/image_gallery_saver_plus.dart';
+import 'package:flutter/services.dart';
 
 import '../utils/image_utils.dart';
 import '../traitement_image.dart';
@@ -36,6 +37,9 @@ class _EcranResultatState extends State<EcranResultat> {
   bool _isProcessing = true;
   Interpreter? _iaModel;
   
+  // Stockage en mémoire vive du modèle LaMa
+  Uint8List? _lamaBytes;
+  
   Uint8List? _imageResultatBytes;
   Uint8List? _imageFondPropreBytes;
 
@@ -61,7 +65,18 @@ class _EcranResultatState extends State<EcranResultat> {
   /// Charge le modèle TFLite en mémoire puis déclenche l'analyse de l'image.
   Future<void> _lancerProcessusAutomatique() async {
     try {
+      // Charge YOLOv8
       _iaModel = await Interpreter.fromAsset('assets/best.tflite');
+      
+      // Charge LaMa
+      try {
+        final ByteData lamaData = await rootBundle.load('assets/lama_dynamic_45mo.tflite');
+        _lamaBytes = lamaData.buffer.asUint8List();
+        print("[LaMa] Modèle d'inpainting chargé en mémoire (${_lamaBytes!.lengthInBytes ~/ (1024*1024)} Mo)");
+      } catch (e) {
+        print("[LaMa] Fichier introuvable. On utilisera le Tampon OpenCV classique. Erreur: $e");
+      }
+
       await _analyserImage();
     } catch (e) {
       print("[IA - ERREUR FATALE] Échec au chargement du modèle : $e");
@@ -167,6 +182,7 @@ class _EcranResultatState extends State<EcranResultat> {
            _imageFondPropreBytes = await compute(TraitementImage.effacerAutocollantIsolate, {
              'photoPath': widget.photoPath,
              'pointsIA': _pointsCibles!,
+             'lamaBytes': _lamaBytes, // NOUVEAU : On transmet LaMa
            });
         }
 
@@ -208,6 +224,7 @@ class _EcranResultatState extends State<EcranResultat> {
         'decalageX': _decalageX,
         'decalageY': _decalageY,
         'climAssetPath': climPath,
+        'lamaBytes': _lamaBytes, // NOUVEAU : On transmet LaMa
       });
 
       if (resultImage != null) {

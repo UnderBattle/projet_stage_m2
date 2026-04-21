@@ -65,6 +65,7 @@ flutter:
   uses-material-design: true
   assets:
     - assets/best.tflite
+    - assets/lama_dynamic_45mo.tflite
     - assets/installations/clim_takao_plus/
 
   # To add assets to your application, add an assets section, like this:
