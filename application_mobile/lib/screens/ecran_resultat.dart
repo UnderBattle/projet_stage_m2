@@ -35,6 +35,10 @@ class _EcranResultatState extends State<EcranResultat> {
   // Variables d'état gérant le modèle sélectionné, l'indicateur de chargement et le modèle IA.
   String? _modeleSelectionneChemin;
   bool _isProcessing = true;
+  
+  // Variable pour informer l'utilisateur de l'étape en cours
+  String _loadingMessage = "Initialisation...";
+  
   Interpreter? _iaModel;
   
   // Stockage en mémoire vive du modèle LaMa
@@ -65,22 +69,37 @@ class _EcranResultatState extends State<EcranResultat> {
   /// Charge le modèle TFLite en mémoire puis déclenche l'analyse de l'image.
   Future<void> _lancerProcessusAutomatique() async {
     try {
-      // Charge YOLOv8
-      _iaModel = await Interpreter.fromAsset('assets/best.tflite');
+      setState(() => _loadingMessage = "Chargement des modèles IA...");
       
-      // Charge LaMa
+      // Configure les options d'interpréteur pour optimiser les performances selon la plateforme
+      final interpreterOptions = InterpreterOptions();
+      
+      if (Platform.isAndroid) {
+        // Sur Android, on utilise l'API Neural Network ou le GPU
+        interpreterOptions.addDelegate(XNNPackDelegate()); 
+        // ou interpreterOptions.addDelegate(GpuDelegateV2());
+      } else if (Platform.isIOS) {
+        // Sur iOS, on utilise le CoreML (Neural Engine d'Apple)
+        interpreterOptions.addDelegate(GpuDelegate());
+      }
+
+      // On passe les options au chargement de YOLO
+      _iaModel = await Interpreter.fromAsset(
+        'assets/best.tflite', 
+        options: interpreterOptions
+      );
+      
       try {
         final ByteData lamaData = await rootBundle.load('assets/lama_dynamic_45mo.tflite');
         _lamaBytes = lamaData.buffer.asUint8List();
-        print("[LaMa] Modèle d'inpainting chargé en mémoire (${_lamaBytes!.lengthInBytes ~/ (1024*1024)} Mo)");
+        // Note : LaMa sera initialisé avec ces mêmes options dans le traitement_image.dart
       } catch (e) {
-        print("[LaMa] Fichier introuvable. On utilisera le Tampon OpenCV classique. Erreur: $e");
+        print("Erreur LaMa: $e");
       }
 
       await _analyserImage();
     } catch (e) {
-      print("[IA - ERREUR FATALE] Échec au chargement du modèle : $e");
-      setState(() => _isProcessing = false);
+      print("[IA] Erreur : $e");
     }
   }
 
@@ -90,6 +109,7 @@ class _EcranResultatState extends State<EcranResultat> {
     if (_iaModel == null) return;
 
     try {
+      setState(() => _loadingMessage = "Détection de l'autocollant par l'IA...");
       final imageBytes = await File(widget.photoPath).readAsBytes();
       var inputShape = _iaModel!.getInputTensor(0).shape;
       bool isNHWC = inputShape[3] == 3;
@@ -178,11 +198,12 @@ class _EcranResultatState extends State<EcranResultat> {
         }
 
         if (_pointsCibles != null) {
+           setState(() => _loadingMessage = "Nettoyage du mur en cours...");
            // Lance l'effacement de l'autocollant du mur en tâche de fond.
            _imageFondPropreBytes = await compute(TraitementImage.effacerAutocollantIsolate, {
              'photoPath': widget.photoPath,
              'pointsIA': _pointsCibles!,
-             'lamaBytes': _lamaBytes, // NOUVEAU : On transmet LaMa
+             'lamaBytes': _lamaBytes, 
            });
         }
 
@@ -209,22 +230,26 @@ class _EcranResultatState extends State<EcranResultat> {
   /// Génère l'incrustation finale de la climatisation choisie sur le mur.
   /// Utilise un Isolate pour gérer la perspective, l'ombre et la colorimétrie.
   Future<void> _genererIncrustation() async {
-    if (_pointsCibles == null || _modeleSelectionneChemin == null) return;
-    setState(() => _isProcessing = true);
+    if (_pointsCibles == null || _modeleSelectionneChemin == null || _imageFondPropreBytes == null) return;
+    
+    setState(() {
+      _isProcessing = true;
+      _loadingMessage = "Calcul des ombres et lumières...";
+    });
 
     try {
       String climPath = _modeleSelectionneChemin!;
       final ByteData data = await DefaultAssetBundle.of(context).load(climPath);
       Uint8List climBytes = data.buffer.asUint8List();
 
+      // On passe le "Fond Propre" déjà calculé pour éviter de relancer l'Inpainting IA !
       Uint8List? resultImage = await compute(TraitementImage.incrusterClimatisationIsolate, {
-        'photoPath': widget.photoPath,
+        'fondPropreBytes': _imageFondPropreBytes!, // Le mur est déjà nettoyé
         'climBytes': climBytes,
         'pointsIA': _pointsCibles!,
         'decalageX': _decalageX,
         'decalageY': _decalageY,
         'climAssetPath': climPath,
-        'lamaBytes': _lamaBytes, // NOUVEAU : On transmet LaMa
       });
 
       if (resultImage != null) {
@@ -300,7 +325,16 @@ class _EcranResultatState extends State<EcranResultat> {
                       builder: (context, constraints) {
                         if (_imageWidth == null || _imageHeight == null) {
                            return _isProcessing 
-                              ? const Center(child: CircularProgressIndicator()) 
+                              ? Center(
+                                  child: Column(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      const CircularProgressIndicator(),
+                                      const SizedBox(height: 16),
+                                      Text(_loadingMessage, style: const TextStyle(fontWeight: FontWeight.bold)),
+                                    ],
+                                  ),
+                                ) 
                               : Image.file(File(widget.photoPath), fit: BoxFit.contain);
                         }
 
@@ -323,7 +357,6 @@ class _EcranResultatState extends State<EcranResultat> {
                                      ),
                                    ),
                                  ),
-                               if (_isProcessing) const Center(child: CircularProgressIndicator()),
                              ],
                            );
                         }
@@ -361,14 +394,14 @@ class _EcranResultatState extends State<EcranResultat> {
                         return Stack(
                           children: [
                             Positioned.fill(
-                              // Affiche l'image appropriée (originale, fond nettoyé pendant le déplacement, ou résultat final).
-                              child: _modeleSelectionneChemin == null
-                                  ? Image.file(File(widget.photoPath), fit: BoxFit.contain)
-                                  : (_isDragging && _imageFondPropreBytes != null)
-                                      ? Image.memory(_imageFondPropreBytes!, fit: BoxFit.contain)
-                                      : (_imageResultatBytes != null
-                                          ? Image.memory(_imageResultatBytes!, fit: BoxFit.contain)
-                                          : Image.file(File(widget.photoPath), fit: BoxFit.contain)),
+                              // On affiche le fond propre dès qu'il est prêt, même si aucune clim n'est choisie !
+                              child: (_isDragging && _imageFondPropreBytes != null)
+                                  ? Image.memory(_imageFondPropreBytes!, fit: BoxFit.contain)
+                                  : (_imageResultatBytes != null)
+                                      ? Image.memory(_imageResultatBytes!,   fit: BoxFit.contain)
+                                      : (_imageFondPropreBytes != null)
+                                          ? Image.memory(_imageFondPropreBytes!, fit: BoxFit.contain)
+                                          : Image.file(File(widget.photoPath), fit: BoxFit.contain),
                             ),
 
                             if (_modeleSelectionneChemin != null)
@@ -402,9 +435,26 @@ class _EcranResultatState extends State<EcranResultat> {
                                 ),
                               ),
 
-                            if (_isProcessing && !_isDragging && _modeleSelectionneChemin != null)
+                            // Affichage de l'écran de chargement dynamique avec texte
+                            if (_isProcessing && !_isDragging)
                               Positioned.fill(
-                                child: Container(color: Colors.black38, child: const Center(child: CircularProgressIndicator(color: Colors.white))),
+                                child: Container(
+                                  color: Colors.black54, 
+                                  child: Center(
+                                    child: Column(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        const CircularProgressIndicator(color: Colors.white),
+                                        const SizedBox(height: 16),
+                                        Text(
+                                          _loadingMessage, 
+                                          style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
+                                          textAlign: TextAlign.center,
+                                        ),
+                                      ],
+                                    )
+                                  )
+                                ),
                               ),
                           ],
                         );
