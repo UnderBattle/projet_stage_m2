@@ -24,6 +24,7 @@ class TraitementImage {
       decalageX: params['decalageX'] as double,
       decalageY: params['decalageY'] as double,
       climAssetPath: params['climAssetPath'] as String,
+      profondeurMm: params['profondeurMm'] as double,
     );
   }
   
@@ -89,7 +90,7 @@ class TraitementImage {
           print("[IA Inpainting] Démarrage de l'analyse LaMa...");
           
           // 1. Découpage d'un carré large autour de l'autocollant (pour donner du contexte à l'IA)
-          int cropS = (math.max(rect.width, rect.height) * 2.2).toInt();
+          int cropS = (math.max(rect.width, rect.height) * 1.8).toInt();
           int cropX = (rect.x + rect.width / 2 - cropS / 2).toInt();
           int cropY = (rect.y + rect.height / 2 - cropS / 2).toInt();
           
@@ -106,11 +107,12 @@ class TraitementImage {
           cv.Mat cropMaskLama = maskLama.region(cropRect);
 
           // =================================================================================
-          // L'ASTUCE OPENCV + LAMA : On détruit l'autocollant vert AVANT le redimensionnement
+          // L'ASTUCE OPENCV + LAMA : On remplit l'autocollant avec la couleur moyenne.
+          // Cela permet à l'IA d'avoir une coupure nette pour continuer les motifs (briques, rayures)
+          // sans baver, contrairement à l'algorithme Telea qui détruit les raccords.
           // =================================================================================
           cv.Mat invCropMask = cv.bitwiseNOT(cropMaskLama);
           cv.Scalar couleurMoyenne = cv.mean(cropImg, mask: invCropMask);
-          
           cropImg.setTo(couleurMoyenne, mask: cropMaskLama);
           // =================================================================================
 
@@ -165,9 +167,19 @@ class TraitementImage {
           Uint8List jpgBytes = img.encodeJpg(repairedImg, quality: 100);
           cv.Mat patch512 = cv.imdecode(jpgBytes, cv.IMREAD_COLOR);
           
+          // =================================================================================
+          // UPSCALING PRO ET FILTRE DE NETTETÉ (Pour tuer le flou d'agrandissement)
+          // =================================================================================
+          // On utilise INTER_CUBIC au lieu de l'agrandissement linéaire pixelisé standard
+          cv.Mat patchFinal = cv.resize(patch512, (cropS, cropS), interpolation: cv.INTER_CUBIC);
+          
+          // Filtre Unsharp Mask (Netteté de la texture) ajusté pour ne pas brûler les couleurs
+          cv.Mat blurredPatch = cv.gaussianBlur(patchFinal, (0, 0), 2.0); 
+          cv.Mat patchNet = cv.addWeighted(patchFinal, 1.5, blurredPatch, -0.5, 0.0);
+          
           // On remet la zone à sa taille d'origine et on la colle
-          cv.Mat patchFinal = cv.resize(patch512, (cropS, cropS));
-          patchFinal.copyTo(murRepare.region(cropRect));
+          patchNet.copyTo(murRepare.region(cropRect));
+          // =================================================================================
           
           interpreter.close();
           inpaintingReussi = true;
@@ -203,31 +215,47 @@ class TraitementImage {
         patch.copyTo(murRepare.region(cv.Rect(rectX, rectY, rectW, rectH)));
       }
 
-      // Crée un dégradé (feathering) sur les bords du patch pour une transition douce.
-      cv.Mat smallMask = cv.resize(maskTransition, (wMur ~/ 4, hMur ~/ 4));
-      cv.Mat smallMaskFlou = cv.gaussianBlur(smallMask, (13, 13), 0.0);
-      cv.Mat maskFeather8u = cv.resize(smallMaskFlou, (wMur, hMur));
-
       // =================================================================================
-      // FIX ANTI-FANTÔME OPENCV : On force l'opacité à 100% au centre du masque flou.
+      // SEAMLESS CLONE (POISSON BLENDING) POUR CORRIGER LES COULEURS !
       // =================================================================================
-      cv.Mat maskFeatherSecurise = cv.bitwiseOR(maskFeather8u, maskLama);
+      cv.Mat resultImg;
+      try {
+        // On récupère le centre physique de l'autocollant pour indiquer à OpenCV où fusionner la lumière
+        // FIX : Utilisation du 'rect' déjà calculé au lieu de crasher en castant un Mat en VecPoint !
+        cv.Point center = cv.Point(rect.x + rect.width ~/ 2, rect.y + rect.height ~/ 2);
 
-      cv.Mat maskFeather3c = cv.cvtColor(maskFeatherSecurise, cv.COLOR_GRAY2BGR);
-      cv.Mat maskFeatherF = maskFeather3c.convertTo(cv.MatType.CV_32FC3, alpha: 1.0 / 255.0);
+        // SeamlessClone force mathématiquement les bords de la rustine à adopter la couleur du vrai mur.
+        resultImg = cv.seamlessClone(murRepare, murMat, maskLama, center, cv.NORMAL_CLONE);
+        print("[OpenCV] Fusion SeamlessClone réussie ! Couleurs corrigées.");
+      } catch (e) {
+        print("[OpenCV] SeamlessClone impossible (bord atteint), fallback au fondu Alpha : $e");
+        
+        // Crée un dégradé (feathering) sur les bords du patch pour une transition douce.
+        cv.Mat smallMask = cv.resize(maskTransition, (wMur ~/ 4, hMur ~/ 4));
+        cv.Mat smallMaskFlou = cv.gaussianBlur(smallMask, (13, 13), 0.0);
+        cv.Mat maskFeather8u = cv.resize(smallMaskFlou, (wMur, hMur));
 
-      cv.Mat invMaskFeather8u = cv.bitwiseNOT(maskFeatherSecurise);
-      cv.Mat invMaskFeather3c = cv.cvtColor(invMaskFeather8u, cv.COLOR_GRAY2BGR);
-      cv.Mat invMaskFeatherF = invMaskFeather3c.convertTo(cv.MatType.CV_32FC3, alpha: 1.0 / 255.0);
+        // =================================================================================
+        // FIX ANTI-FANTÔME OPENCV : On force l'opacité à 100% au centre du masque flou.
+        // =================================================================================
+        cv.Mat maskFeatherSecurise = cv.bitwiseOR(maskFeather8u, maskLama);
 
-      cv.Mat murRepareF = murRepare.convertTo(cv.MatType.CV_32FC3);
-      cv.Mat murOriginalF = murMat.convertTo(cv.MatType.CV_32FC3);
+        cv.Mat maskFeather3c = cv.cvtColor(maskFeatherSecurise, cv.COLOR_GRAY2BGR);
+        cv.Mat maskFeatherF = maskFeather3c.convertTo(cv.MatType.CV_32FC3, alpha: 1.0 / 255.0);
 
-      cv.Mat fgInpaint = cv.multiply(murRepareF, maskFeatherF);
-      cv.Mat bgInpaint = cv.multiply(murOriginalF, invMaskFeatherF);
-      
-      cv.Mat resultImgF = cv.add(fgInpaint, bgInpaint);
-      cv.Mat resultImg = resultImgF.convertTo(cv.MatType.CV_8UC3);
+        cv.Mat invMaskFeather8u = cv.bitwiseNOT(maskFeatherSecurise);
+        cv.Mat invMaskFeather3c = cv.cvtColor(invMaskFeather8u, cv.COLOR_GRAY2BGR);
+        cv.Mat invMaskFeatherF = invMaskFeather3c.convertTo(cv.MatType.CV_32FC3, alpha: 1.0 / 255.0);
+
+        cv.Mat murRepareF = murRepare.convertTo(cv.MatType.CV_32FC3);
+        cv.Mat murOriginalF = murMat.convertTo(cv.MatType.CV_32FC3);
+
+        cv.Mat fgInpaint = cv.multiply(murRepareF, maskFeatherF);
+        cv.Mat bgInpaint = cv.multiply(murOriginalF, invMaskFeatherF);
+        
+        cv.Mat resultImgF = cv.add(fgInpaint, bgInpaint);
+        resultImg = resultImgF.convertTo(cv.MatType.CV_8UC3);
+      }
 
       // Encode l'image finale en JPEG.
       var encodeResult = cv.imencode('.jpg', resultImg);
@@ -247,6 +275,7 @@ class TraitementImage {
     double decalageX = 0.0,
     double decalageY = 0.0, 
     required String climAssetPath,
+    required double profondeurMm, // NOUVEAU : Utilisé pour le calcul 3D des ombres
   }) async {
     try {
       // Décode directement le mur nettoyé (fini de recalculer l'inpainting à chaque mouvement !)
@@ -356,10 +385,13 @@ class TraitementImage {
       double dirLumiereX = gradX / norme;
       double dirLumiereY = gradY / norme;
 
-      // Génère une ombre portée en fonction de la direction de la lumière détectée.
-      double forceOmbre = 20.0; 
-      double shiftX = norme < 1.0 ? 5.0 : -dirLumiereX * forceOmbre;
-      double shiftY = norme < 1.0 ? 15.0 : -dirLumiereY * forceOmbre;
+      // Simulation du volume par ombre porter
+      // Plus la clim est profonde, plus l'ombre s'éloigne du mur.
+      double ratioVolume = profondeurMm / 100.0; // Ex: Pour 240mm -> Ratio de 2.4
+      double forceOmbre = 12.0 * ratioVolume; // L'ombre est proportionnelle au volume
+
+      double shiftX = norme < 1.0 ? (3.0 * ratioVolume) : -dirLumiereX * forceOmbre;
+      double shiftY = norme < 1.0 ? (8.0 * ratioVolume) : -dirLumiereY * forceOmbre;
 
       // Crée une ombre déformée et floutée (Directionnelle)
       List<cv.Point> ptsDstOmbre = ptsDstLisses.map((pt) {
@@ -372,7 +404,11 @@ class TraitementImage {
       cv.Mat smallAlpha = cv.resize(alphaOmbre, (wMur ~/ 4, hMur ~/ 4));
       cv.Mat smallOmbreFloue = cv.gaussianBlur(smallAlpha, (21, 21), 0.0);
       cv.Mat ombreFloueUpscaled = cv.resize(smallOmbreFloue, (wMur, hMur), interpolation: cv.INTER_CUBIC);
-      cv.Mat ombreFloueDirectionnelle = cv.gaussianBlur(ombreFloueUpscaled, (15, 15), 0.0);
+      
+      // NOUVEAU : Flou dynamique. Plus l'objet s'éloigne du mur (profond), plus l'ombre devient douce
+      int flouDir = (11 + (ratioVolume * 2)).toInt();
+      if (flouDir % 2 == 0) flouDir += 1; // Un noyau OpenCV doit toujours être impair
+      cv.Mat ombreFloueDirectionnelle = cv.gaussianBlur(ombreFloueUpscaled, (flouDir, flouDir), 0.0);
 
       // NOUVEAU : OMBRE DE CONTACT (Ambient Occlusion) pour ancrer la clim au mur (Évite l'effet PNG)
       // On décale très légèrement vers le bas (3 pixels) avec un flou très sec pour créer le point de contact
