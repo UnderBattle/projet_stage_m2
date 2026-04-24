@@ -64,6 +64,9 @@ class _EcranResultatState extends State<EcranResultat> {
   double _decalageY = 0.0;
   bool _isDragging = false;
 
+  // Valeur du Slider Avant/Après (1.0 = 100% de la clim visible, 0.0 = 0%)
+  double _splitPercentage = 1.0;
+
   @override
   void initState() {
     super.initState();
@@ -265,6 +268,7 @@ class _EcranResultatState extends State<EcranResultat> {
       if (resultImage != null) {
         setState(() {
           _imageResultatBytes = resultImage;
+          _splitPercentage = 1.0; // On remet le slider à 100% quand une nouvelle image est générée
         });
       }
     } catch (e) {
@@ -327,7 +331,7 @@ class _EcranResultatState extends State<EcranResultat> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Configuration du Devis'),
+        title: const Text('Implémentation de la Machine'),
         backgroundColor: Theme.of(context).colorScheme.inversePrimary,
       ),
       body: Column(
@@ -420,20 +424,72 @@ class _EcranResultatState extends State<EcranResultat> {
 
                               return Stack(
                                 children: [
+                                  // COUCHE 1 - L'image AVANT (Fond propre ou original)
                                   Positioned.fill(
-                                    // On affiche le fond propre dès qu'il est prêt, même si aucune clim n'est choisie !
-                                    child: (_isDragging && _imageFondPropreBytes != null)
+                                    child: _imageFondPropreBytes != null
                                         ? Image.memory(_imageFondPropreBytes!, fit: BoxFit.contain)
-                                        : (_imageResultatBytes != null)
-                                            ? Image.memory(_imageResultatBytes!,   fit: BoxFit.contain)
-                                            : (_imageFondPropreBytes != null)
-                                                ? Image.memory(_imageFondPropreBytes!, fit: BoxFit.contain)
-                                                : Image.file(File(widget.photoPath), fit: BoxFit.contain),
+                                        : Image.file(File(widget.photoPath), fit: BoxFit.contain),
                                   ),
 
-                                  // On n'affiche la machine que si le chemin correspond à une machine de la catégorie sélectionnée (sécurité)
+                                  // COUCHE 2 - L'image APRÈS (Résultat avec clim) découpée par le Slider !
+                                  if (_imageResultatBytes != null && !_isDragging)
+                                    Positioned.fill(
+                                      child: ClipRect(
+                                        clipper: _SplitClipper(_splitPercentage),
+                                        child: Image.memory(_imageResultatBytes!, fit: BoxFit.contain),
+                                      ),
+                                    ),
+
+                                  // LIGNE VISUELLE INTERACTIVE (Le curseur vertical qui se glisse)
+                                  if (_imageResultatBytes != null && !_isDragging)
+                                    Positioned(
+                                      key: const ValueKey('slider_interactif'),
+                                      top: 0,
+                                      bottom: 0,
+                                      // On centre la "Hitbox" invisible autour de la ligne visuelle
+                                      left: (constraints.maxWidth * _splitPercentage) - 20, 
+                                      child: GestureDetector(
+                                        behavior: HitTestBehavior.opaque,
+                                        // Détecte le glissement horizontal du doigt sur la ligne
+                                        onHorizontalDragUpdate: (details) {
+                                          setState(() {
+                                            // Ajoute le mouvement du doigt (en pixels) converti en pourcentage
+                                            _splitPercentage += details.delta.dx / constraints.maxWidth;
+                                            // Sécurité : Bloque la ligne entre 0% et 100% de l'image
+                                            _splitPercentage = _splitPercentage.clamp(0.0, 1.0);
+                                          });
+                                        },
+                                        child: SizedBox(
+                                          width: 40, // La Hitbox magique de 40px invisible pour attraper facilement la ligne
+                                          child: Stack(
+                                            alignment: Alignment.center, // Aligne horizontalement au centre de la Hitbox
+                                            children: [
+                                              // La ligne visuelle réelle de 3 pixels
+                                              Container(width: 3, color: Colors.white),
+                                              // Le rond avec les flèches, forcé en bas de l'image !
+                                              Positioned(
+                                                bottom: 20, // Décale légèrement du bas de l'image pour que ce soit joli
+                                                child: Container(
+                                                  height: 35,
+                                                  width: 35,
+                                                  decoration: const BoxDecoration(
+                                                    color: Colors.white,
+                                                    shape: BoxShape.circle,
+                                                    boxShadow: [BoxShadow(color: Colors.black38, blurRadius: 6, spreadRadius: 1)]
+                                                  ),
+                                                  child: const Icon(Icons.compare_arrows, size: 20, color: Colors.teal),
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+
+                                  // COUCHE 3 - La clim en mouvement (quand l'utilisateur la déplace manuellement)
                                   if (_modeleSelectionneChemin != null && catalogueGlobal[_categorieSelectionnee]!.any((c) => c['chemin'] == _modeleSelectionneChemin))
                                     Positioned(
+                                      key: const ValueKey('clim_draggable'),
                                       left: climScreenX,
                                       top: climScreenY,
                                       width: climScreenW,
@@ -449,6 +505,10 @@ class _EcranResultatState extends State<EcranResultat> {
                                            });
                                         },
                                         onPanEnd: (details) {
+                                           setState(() => _isDragging = false);
+                                           _genererIncrustation(); 
+                                        },
+                                        onPanCancel: () {
                                            setState(() => _isDragging = false);
                                            _genererIncrustation(); 
                                         },
@@ -517,7 +577,7 @@ class _EcranResultatState extends State<EcranResultat> {
           // Section du bas restructurée avec Onglets et Liste des équipements
           if (_pointsCibles != null) 
             Container(
-              height: 190, // Un peu plus haut pour laisser la place aux onglets
+              height: 190, 
               padding: const EdgeInsets.only(top: 10, bottom: 10),
               decoration: BoxDecoration(
                 color: Colors.white,
@@ -638,4 +698,19 @@ class _EcranResultatState extends State<EcranResultat> {
       floatingActionButtonLocation: FloatingActionButtonLocation.centerFloat,
     );
   }
+}
+
+// Outil mathématique (Clipper) permettant de cacher une partie de l'image de la clim
+class _SplitClipper extends CustomClipper<Rect> {
+  final double percentage;
+  _SplitClipper(this.percentage);
+
+  @override
+  Rect getClip(Size size) {
+    // Ne dessine que la partie gauche de l'image en fonction du pourcentage du Slider
+    return Rect.fromLTRB(0, 0, size.width * percentage, size.height);
+  }
+
+  @override
+  bool shouldReclip(_SplitClipper oldClipper) => percentage != oldClipper.percentage;
 }
