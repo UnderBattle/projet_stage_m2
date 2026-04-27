@@ -3,6 +3,7 @@ import 'package:flutter/foundation.dart';
 import 'package:camera/camera.dart';
 import 'package:image_picker/image_picker.dart';
 import '../utils/image_utils.dart';
+import '../services/ia_service.dart';
 import 'ecran_resultat.dart';
 
 /// Écran principal permettant à l'utilisateur de prendre une photo du mur ou d'en choisir une dans la galerie.
@@ -25,6 +26,10 @@ class _EcranAccueilState extends State<EcranAccueil> {
   @override
   void initState() {
     super.initState();
+    
+    // On lance le chargement de l'IA en tâche de fond
+    IAService().initModels();
+
     // Initialise le contrôleur avec la première caméra disponible (généralement la caméra arrière) en haute résolution.
     if (widget.cameras.isNotEmpty) {
       _controller = CameraController(
@@ -53,6 +58,12 @@ class _EcranAccueilState extends State<EcranAccueil> {
     if (_controller != null && _controller!.value.isInitialized) {
       try {
         setState(() => _isOptimizing = true);
+        
+        // Si le client a été plus vite que le chargement, on patiente pour sécuriser l'IA
+        if (!IAService().isInitialized) {
+          await IAService().initModels();
+        }
+
         final rawImage = await _controller!.takePicture();
         
         // Lance le redimensionnement dans un Isolate pour éviter que l'interface ne gèle.
@@ -75,6 +86,11 @@ class _EcranAccueilState extends State<EcranAccueil> {
       final XFile? rawImage = await _picker.pickImage(source: ImageSource.gallery);
       if (rawImage != null && mounted) {
         setState(() => _isOptimizing = true);
+        
+        // Sécurité pour le chargement de l'IA
+        if (!IAService().isInitialized) {
+          await IAService().initModels();
+        }
         
         // Même optimisation que pour l'appareil photo via un Isolate.
         String? optimizedPath = await compute(redimensionnerImageLourde, rawImage.path);
@@ -175,7 +191,7 @@ class _EcranAccueilState extends State<EcranAccueil> {
                   children: [
                     CircularProgressIndicator(color: Colors.white),
                     SizedBox(height: 15),
-                    Text("Préparation de l'image...", style: TextStyle(color: Colors.white, fontSize: 16)),
+                    Text("Préparation...", style: TextStyle(color: Colors.white, fontSize: 16)),
                   ],
                 ),
               ),
