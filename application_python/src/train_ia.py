@@ -11,25 +11,29 @@ CHEMIN_DATA_YAML = '../../dataset_autocollant/data.yaml'
 CHEMIN_DOSSIER_TEST = '../../dataset_autocollant/test/images'
 
 if __name__ == '__main__':
-    print("[IA] Chargement du modèle YOLOv8-Pose (Nano)...")
-    # On charge le tout petit modèle de base "nano"
-    model = YOLO('yolov8n-pose.pt') 
+    print("[IA] Chargement du modèle YOLOv8-Pose (Small)...")
+    model = YOLO('yolov8s-pose.pt') 
 
-    print("[IA] Lancement de l'entraînement avec le dataset Roboflow...")
+    print("[IA] Lancement de l'entraînement de haute précision...")
     results = model.train(
         data=CHEMIN_DATA_YAML, 
-        epochs=50,
+        epochs=300,
+        patience=50, 
         imgsz=IMGSZ,
-        batch=6,
-        device='cpu',
         
-        # Vu que Roboflow a déjà fait de la Data Augmentation, on désactive celles de YOLO
+        # On garde un batch de 4 pour ne pas saturer la RTX 3060
+        batch=4,
+        device=0, 
+        
+        # Le fix Windows pour éviter le crash de la mémoire
+        workers=0,
+        
         fliplr=0.0,
         flipud=0.0,
         mosaic=0.0,
         degrees=0.0,
         
-        # Pénalité de l'absence de détection (box) et des points clés (pose)
+        # Ajustement des pénalités pour se concentrer sur la précision des 4 coins
         pose=35.0,
         box=15.0
     )

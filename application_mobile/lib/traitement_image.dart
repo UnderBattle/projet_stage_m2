@@ -70,10 +70,6 @@ class TraitementImage {
       cv.Mat kernelLama = cv.Mat.ones(25, 25, cv.MatType.CV_8UC1);
       cv.Mat maskLama = cv.dilate(maskGeo, kernelLama, iterations: 1); 
 
-      // Épaissit légèrement le masque pour assurer une couverture complète.
-      cv.Mat kernelDilate = cv.Mat.ones(15, 15, cv.MatType.CV_8UC1);
-      cv.Mat maskTransition = cv.dilate(maskLama, kernelDilate, iterations: 2);
-      
       // Calcule le rectangle qui entoure l'autocollant.
       cv.Rect rect = cv.boundingRect(cv.VecPoint.fromList(ptsOri));
       
@@ -114,7 +110,6 @@ class TraitementImage {
           cv.Mat invCropMask = cv.bitwiseNOT(cropMaskLama);
           cv.Scalar couleurMoyenne = cv.mean(cropImg, mask: invCropMask);
           cropImg.setTo(couleurMoyenne, mask: cropMaskLama);
-          // =================================================================================
 
           // 2. Redimensionnement au standard LaMa (512x512)
           cv.Mat img512 = cv.resize(cropImg, (512, 512));
@@ -179,7 +174,6 @@ class TraitementImage {
           
           // On remet la zone à sa taille d'origine et on la colle
           patchNet.copyTo(murRepare.region(cropRect));
-          // =================================================================================
           
           interpreter.close();
           inpaintingReussi = true;
@@ -216,34 +210,15 @@ class TraitementImage {
       }
 
       // =================================================================================
-      // SEAMLESS CLONE (POISSON BLENDING) POUR CORRIGER LES COULEURS !
+      // FUSION PAR FEATHERING (10x plus rapide et plus fidèle que SeamlessClone)
       // =================================================================================
       cv.Mat resultImg;
       try {
-        // On récupère le centre physique de l'autocollant pour indiquer à OpenCV où fusionner la lumière
-        // FIX : Utilisation du 'rect' déjà calculé au lieu de crasher en castant un Mat en VecPoint !
-        cv.Point center = cv.Point(rect.x + rect.width ~/ 2, rect.y + rect.height ~/ 2);
-
-        // SeamlessClone force mathématiquement les bords de la rustine à adopter la couleur du vrai mur.
-        resultImg = cv.seamlessClone(murRepare, murMat, maskLama, center, cv.NORMAL_CLONE);
-        print("[OpenCV] Fusion SeamlessClone réussie ! Couleurs corrigées.");
-      } catch (e) {
-        print("[OpenCV] SeamlessClone impossible (bord atteint), fallback au fondu Alpha : $e");
-        
-        // Crée un dégradé (feathering) sur les bords du patch pour une transition douce.
-        cv.Mat smallMask = cv.resize(maskTransition, (wMur ~/ 4, hMur ~/ 4));
-        cv.Mat smallMaskFlou = cv.gaussianBlur(smallMask, (13, 13), 0.0);
-        cv.Mat maskFeather8u = cv.resize(smallMaskFlou, (wMur, hMur));
-
-        // =================================================================================
-        // FIX ANTI-FANTÔME OPENCV : On force l'opacité à 100% au centre du masque flou.
-        // =================================================================================
-        cv.Mat maskFeatherSecurise = cv.bitwiseOR(maskFeather8u, maskLama);
-
-        cv.Mat maskFeather3c = cv.cvtColor(maskFeatherSecurise, cv.COLOR_GRAY2BGR);
+        cv.Mat maskFeather8u = cv.gaussianBlur(maskLama, (31, 31), 0.0);
+        cv.Mat maskFeather3c = cv.cvtColor(maskFeather8u, cv.COLOR_GRAY2BGR);
         cv.Mat maskFeatherF = maskFeather3c.convertTo(cv.MatType.CV_32FC3, alpha: 1.0 / 255.0);
 
-        cv.Mat invMaskFeather8u = cv.bitwiseNOT(maskFeatherSecurise);
+        cv.Mat invMaskFeather8u = cv.bitwiseNOT(maskFeather8u);
         cv.Mat invMaskFeather3c = cv.cvtColor(invMaskFeather8u, cv.COLOR_GRAY2BGR);
         cv.Mat invMaskFeatherF = invMaskFeather3c.convertTo(cv.MatType.CV_32FC3, alpha: 1.0 / 255.0);
 
@@ -255,6 +230,9 @@ class TraitementImage {
         
         cv.Mat resultImgF = cv.add(fgInpaint, bgInpaint);
         resultImg = resultImgF.convertTo(cv.MatType.CV_8UC3);
+      } catch (e) {
+        print("[OpenCV] Erreur lors du blending : $e");
+        resultImg = murRepare; // Sécurité
       }
 
       // Encode l'image finale en JPEG.
@@ -269,13 +247,13 @@ class TraitementImage {
   /// Incruste la climatisation sur le mur en gérant la perspective, l'ombre et la lumière.
   /// OPTIMISATION : Utilise le mur déjà nettoyé par LaMa pour être instantané.
   static Future<Uint8List?> incrusterClimatisation({
-    required Uint8List fondPropreBytes, // NOUVEAU : On prend l'image du mur nettoyé
+    required Uint8List fondPropreBytes, 
     required Uint8List climBytes,
     required List<Map<String, double>> pointsIA,
     double decalageX = 0.0,
     double decalageY = 0.0, 
     required String climAssetPath,
-    required double profondeurMm, // NOUVEAU : Utilisé pour le calcul 3D des ombres
+    required double profondeurMm, 
   }) async {
     try {
       // Décode directement le mur nettoyé (fini de recalculer l'inpainting à chaque mouvement !)
@@ -299,7 +277,6 @@ class TraitementImage {
       // === PHASE 2 : CALCUL DE LA PERSPECTIVE STABILISEE ===
       // =========================================================================
 
-      // Calcule la perspective et l'angle de l'autocollant pour stabiliser l'image.
       cv.Point ptHg = ptsOri[0];
       cv.Point ptHd = ptsOri[1];
 
@@ -308,19 +285,16 @@ class TraitementImage {
       double largeurPx = math.sqrt(dx * dx + dy * dy);
       double angleRad = math.atan2(dy, dx);
 
-      // Dimensions réelles de l'autocollant en millimètres.
       double hAutoMm = 100.0;
       double wAutoMm = 50.0; 
       double ratioPhysique = hAutoMm / wAutoMm; 
       double hauteurPx = largeurPx * ratioPhysique;
 
-      // Calcule les vecteurs de direction pour la perspective.
       double ux = largeurPx * math.cos(angleRad);
       double uy = largeurPx * math.sin(angleRad);
       double vx = -hauteurPx * math.sin(angleRad);
       double vy = hauteurPx * math.cos(angleRad);
 
-      // Calcule les 4 points de destination pour la déformation, en incluant le décalage manuel.
       List<cv.Point> ptsDstLisses = [
         cv.Point((ptHg.x + decalageX).toInt(), (ptHg.y + decalageY).toInt()),
         cv.Point((ptHg.x + ux + decalageX).toInt(), (ptHg.y + uy + decalageY).toInt()),
@@ -332,20 +306,16 @@ class TraitementImage {
       // === PHASE 3 : TAILLE RÉELLE ET DÉFORMATION 3D ===
       // =========================================================================
 
-      // Applique la déformation de perspective à l'image de la climatisation.
       cv.Mat climMat = cv.imdecode(climBytes, cv.IMREAD_UNCHANGED);
 
-      // Dimensions réelles de la climatisation en millimètres.
       double hClimMm = 270.0; 
       double wClimMm = 798.0; 
       int wImgClim = climMat.cols;
       int hImgClim = climMat.rows;
 
-      // Calcule la taille virtuelle de l'autocollant sur l'image de la climatisation.
       double wAutoPx = (wAutoMm / wClimMm) * wImgClim;
       double hAutoPx = (hAutoMm / hClimMm) * hImgClim;
 
-      // Points source sur l'image de la climatisation (correspondant à l'autocollant virtuel).
       List<cv.Point> ptsSrc = [
         cv.Point(0, 0),
         cv.Point(wAutoPx.toInt(), 0),
@@ -359,7 +329,13 @@ class TraitementImage {
       cv.Mat climWarped = cv.warpPerspective(climMat, hMatrix, (wMur, hMur));
       var channels = cv.split(climWarped);
       cv.Mat alphaMaskOriginale = channels[3]; 
-      cv.Mat alphaMask = cv.gaussianBlur(alphaMaskOriginale, (3, 3), 0.0);
+
+      // FIX TRANSPARENCE : Bétonnage du masque Alpha !
+      // On force tous les pixels semi-transparents du centre de l'image (ex: l'ombre interne des plastiques)
+      // à devenir 100% opaques (255) pour que les lattes de bois ne passent plus à travers.
+      cv.Mat alphaBinaire = cv.threshold(alphaMaskOriginale, 127, 255, cv.THRESH_BINARY).$2;
+      // On applique un très léger flou juste pour que les bords ne soient pas pixelisés
+      cv.Mat alphaMask = cv.gaussianBlur(alphaBinaire, (3, 3), 0.0);
       
       cv.Mat climBgr = cv.cvtColor(climWarped, cv.COLOR_BGRA2BGR);
       cv.Mat maskBinaire = cv.threshold(alphaMask, 5, 255, cv.THRESH_BINARY).$2;
@@ -369,66 +345,60 @@ class TraitementImage {
       // =========================================================================
       cv.Mat grayMur = cv.cvtColor(resultImg, cv.COLOR_BGR2GRAY);
       
-      // Utilise un filtre de Sobel pour détecter les gradients de lumière sur le mur.
-      cv.Mat grayMurFlou = cv.gaussianBlur(grayMur, (51, 51), 0.0);
+      int downscaleSobel = 32;
+      cv.Mat grayMurSmall = cv.resize(grayMur, (wMur ~/ downscaleSobel, hMur ~/ downscaleSobel));
+      cv.Mat maskBinaireSmall = cv.resize(maskBinaire, (wMur ~/ downscaleSobel, hMur ~/ downscaleSobel));
+
+      cv.Mat grayMurFlou = cv.gaussianBlur(grayMurSmall, (7, 7), 0.0);
       cv.Mat sobelX = cv.sobel(grayMurFlou, cv.MatType.CV_32F, 1, 0, ksize: 3);
       cv.Mat sobelY = cv.sobel(grayMurFlou, cv.MatType.CV_32F, 0, 1, ksize: 3);
 
-      cv.Scalar meanSobelX = cv.mean(sobelX, mask: maskBinaire);
-      cv.Scalar meanSobelY = cv.mean(sobelY, mask: maskBinaire);
+      cv.Scalar meanSobelX = cv.mean(sobelX, mask: maskBinaireSmall);
+      cv.Scalar meanSobelY = cv.mean(sobelY, mask: maskBinaireSmall);
 
       double gradX = meanSobelX.val[0];
       double gradY = meanSobelY.val[0];
 
-      // Normalise le vecteur pour obtenir la direction de la lumière.
       double norme = math.sqrt(gradX * gradX + gradY * gradY) + 0.0001; 
       double dirLumiereX = gradX / norme;
       double dirLumiereY = gradY / norme;
 
-      // Simulation du volume par ombre porter
-      // Plus la clim est profonde, plus l'ombre s'éloigne du mur.
-      double ratioVolume = profondeurMm / 100.0; // Ex: Pour 240mm -> Ratio de 2.4
-      double forceOmbre = 12.0 * ratioVolume; // L'ombre est proportionnelle au volume
+      double ratioVolume = profondeurMm / 100.0; 
+      double forceOmbre = 12.0 * ratioVolume; 
 
       double shiftX = norme < 1.0 ? (3.0 * ratioVolume) : -dirLumiereX * forceOmbre;
       double shiftY = norme < 1.0 ? (8.0 * ratioVolume) : -dirLumiereY * forceOmbre;
 
-      // Crée une ombre déformée et floutée (Directionnelle)
-      List<cv.Point> ptsDstOmbre = ptsDstLisses.map((pt) {
-        return cv.Point((pt.x + shiftX).toInt(), (pt.y + shiftY).toInt());
-      }).toList();
+      var srcPts = cv.VecPoint.fromList([cv.Point(0, 0), cv.Point(10, 0), cv.Point(0, 10)]);
       
-      cv.Mat hMatrixOmbre = cv.getPerspectiveTransform(vecPtsSrc, cv.VecPoint.fromList(ptsDstOmbre));
-      cv.Mat climWarpedOmbre = cv.warpPerspective(climMat, hMatrixOmbre, (wMur, hMur));
-      cv.Mat alphaOmbre = cv.split(climWarpedOmbre)[3];
+      // 1. Ombre Directionnelle
+      var dstPtsDir = cv.VecPoint.fromList([cv.Point(shiftX.toInt(), shiftY.toInt()), cv.Point(10 + shiftX.toInt(), shiftY.toInt()), cv.Point(shiftX.toInt(), 10 + shiftY.toInt())]);
+      cv.Mat affineMatDir = cv.getAffineTransform(srcPts, dstPtsDir);
+      cv.Mat alphaOmbre = cv.warpAffine(alphaMask, affineMatDir, (wMur, hMur));
+      
       cv.Mat smallAlpha = cv.resize(alphaOmbre, (wMur ~/ 4, hMur ~/ 4));
-      cv.Mat smallOmbreFloue = cv.gaussianBlur(smallAlpha, (21, 21), 0.0);
-      cv.Mat ombreFloueUpscaled = cv.resize(smallOmbreFloue, (wMur, hMur), interpolation: cv.INTER_CUBIC);
-      
-      // NOUVEAU : Flou dynamique. Plus l'objet s'éloigne du mur (profond), plus l'ombre devient douce
-      int flouDir = (11 + (ratioVolume * 2)).toInt();
-      if (flouDir % 2 == 0) flouDir += 1; // Un noyau OpenCV doit toujours être impair
-      cv.Mat ombreFloueDirectionnelle = cv.gaussianBlur(ombreFloueUpscaled, (flouDir, flouDir), 0.0);
+      int baseBlur = (5 + (ratioVolume * 4)).toInt();
+      if (baseBlur % 2 == 0) baseBlur += 1; 
+      cv.Mat smallOmbreFloue = cv.gaussianBlur(smallAlpha, (baseBlur, baseBlur), 0.0);
+      cv.Mat ombreFloueDirectionnelle = cv.resize(smallOmbreFloue, (wMur, hMur), interpolation: cv.INTER_CUBIC);
 
-      // NOUVEAU : OMBRE DE CONTACT (Ambient Occlusion) pour ancrer la clim au mur (Évite l'effet PNG)
-      // On décale très légèrement vers le bas (3 pixels) avec un flou très sec pour créer le point de contact
-      List<cv.Point> ptsDstContact = ptsDstLisses.map((pt) => cv.Point(pt.x, pt.y + 3)).toList();
-      cv.Mat hMatrixContact = cv.getPerspectiveTransform(vecPtsSrc, cv.VecPoint.fromList(ptsDstContact));
-      cv.Mat climWarpedContact = cv.warpPerspective(climMat, hMatrixContact, (wMur, hMur));
-      cv.Mat alphaContact = cv.split(climWarpedContact)[3];
-      cv.Mat ombreFloueContact = cv.gaussianBlur(alphaContact, (7, 7), 0.0);
-
-      // Applique l'ombre sur le mur avec une intensité basée sur la luminosité globale.
-      cv.Scalar lumMurGlobal = cv.mean(grayMur);
+      // 2. Ombre de Contact (Ambient Occlusion)
+      var dstPtsContact = cv.VecPoint.fromList([cv.Point(0, 3), cv.Point(10, 3), cv.Point(0, 13)]);
+      cv.Mat affineMatContact = cv.getAffineTransform(srcPts, dstPtsContact);
+      cv.Mat alphaContact = cv.warpAffine(alphaMask, affineMatContact, (wMur, hMur));
       
-      // On diminue un peu l'intensité directionnelle car on ajoute le contact
-      double intensiteDir = 0.06 + (lumMurGlobal.val[0] / 255.0) * 0.20;
-      double intensiteContact = 0.15; // Le contact est toujours sombre
+      cv.Mat smallContact = cv.resize(alphaContact, (wMur ~/ 4, hMur ~/ 4));
+      cv.Mat smallContactFlou = cv.gaussianBlur(smallContact, (3, 3), 0.0);
+      cv.Mat ombreFloueContact = cv.resize(smallContactFlou, (wMur, hMur), interpolation: cv.INTER_CUBIC);
+
+      cv.Scalar lumMurGlobal = cv.mean(grayMurSmall);
+      
+      double intensiteDir = 0.12 + (lumMurGlobal.val[0] / 255.0) * 0.30;
+      double intensiteContact = 0.25; 
 
       cv.Mat ombreDir8u = ombreFloueDirectionnelle.convertTo(cv.MatType.CV_8UC1, alpha: intensiteDir);
       cv.Mat ombreContact8u = ombreFloueContact.convertTo(cv.MatType.CV_8UC1, alpha: intensiteContact);
       
-      // Addition mathématique des deux ombres (le croisement des deux est plus noir)
       cv.Mat ombreTotale = cv.add(ombreDir8u, ombreContact8u);
       cv.Mat invOmbre8u = cv.bitwiseNOT(ombreTotale);
       cv.Mat invOmbre3c = cv.cvtColor(invOmbre8u, cv.COLOR_GRAY2BGR);
@@ -440,16 +410,19 @@ class TraitementImage {
       cv.Mat murOmbre = murOmbreF.convertTo(cv.MatType.CV_8UC3);
 
       // =========================================================================
-      // === PHASE 5 : LUMIÈRE ET TEMPÉRATURE DE COULEUR (AVEC FIX CLIM NOIRE) ===
+      // === PHASE 5 : LUMIÈRE ET TEMPÉRATURE DE COULEUR INTELLIGENTE ===
       // =========================================================================
 
-      // NOUVEAU : Auto-Détection de la couleur native de la climatisation (Blanche ou Noire ?)
       cv.Scalar meanClimColorO = cv.mean(climBgr, mask: maskBinaire);
       double lumaNativeClim = (0.114 * meanClimColorO.val[0]) + (0.587 * meanClimColorO.val[1]) + (0.299 * meanClimColorO.val[2]);
-      bool estClimNoire = lumaNativeClim < 80.0; // Seuil pour différencier le plastique blanc du plastique noir
-      
-      // Analyse la couleur du mur sous la clim pour teinter légèrement l'unité.
-      cv.Scalar meanMurSousClim = cv.mean(murOmbre, mask: maskBinaire);
+      bool estClimNoire = lumaNativeClim < 80.0; 
+
+      cv.Mat murUltraSmall = cv.resize(resultImg, (wMur ~/ 32, hMur ~/ 32), interpolation: cv.INTER_AREA);
+      cv.Mat murUltraFlou = cv.gaussianBlur(murUltraSmall, (15, 15), 0.0);
+      cv.Mat murLisse = cv.resize(murUltraFlou, (wMur, hMur), interpolation: cv.INTER_CUBIC);
+
+      // --- Teinte de la climatisation ---
+      cv.Scalar meanMurSousClim = cv.mean(murLisse, mask: maskBinaire);
       double bMur = meanMurSousClim.val[0];
       double gMur = meanMurSousClim.val[1];
       double rMur = meanMurSousClim.val[2];
@@ -457,78 +430,71 @@ class TraitementImage {
       double lumMurLocal = (0.114 * bMur) + (0.587 * gMur) + (0.299 * rMur);
       lumMurLocal = math.max(lumMurLocal, 1.0); 
 
-      // Calcule la teinte (color cast) à appliquer.
       double tintB = bMur / lumMurLocal;
       double tintG = gMur / lumMurLocal;
       double tintR = rMur / lumMurLocal;
 
-      double forceTeinte = estClimNoire ? 0.10 : 0.35; 
+      double forceTeinte = estClimNoire ? 0.10 : 0.25; 
       tintB = 1.0 + (tintB - 1.0) * forceTeinte;
       tintG = 1.0 + (tintG - 1.0) * forceTeinte;
       tintR = 1.0 + (tintR - 1.0) * forceTeinte;
 
-      // Applique un filtre de couleur pour que la clim s'intègre mieux.
+      tintB = math.max(0.85, math.min(1.15, tintB));
+      tintG = math.max(0.85, math.min(1.15, tintG));
+      tintR = math.max(0.85, math.min(1.15, tintR));
+
       cv.Mat tintMat = cv.Mat.zeros(hMur, wMur, cv.MatType.CV_32FC3)..setTo(cv.Scalar(tintB, tintG, tintR, 0));
       cv.Mat climF = climBgr.convertTo(cv.MatType.CV_32FC3);
       cv.Mat climTintedF = cv.multiply(climF, tintMat);
       cv.Mat climTinted = climTintedF.convertTo(cv.MatType.CV_8UC3);
 
+      // --- Simulation de l'exposition (Ombre et Soleil sur la clim) ---
       cv.Mat climHsv = cv.cvtColor(climTinted, cv.COLOR_BGR2HSV);
       var hsvChannels = cv.split(climHsv);
       
-      // Calcule la luminosité globale de la pièce.
-      double lumPiece = lumMurGlobal.val[0] / 255.0; // Ratio de 0.0 à 1.0
-      
-      // Ajuste la luminosité de la clim en fonction de la luminosité de la pièce.
-      double ratioAdouci;
-      if (estClimNoire) {
-         // La clim noire doit rester sombre en base, mais monter légèrement si la pièce est inondée de lumière
-         ratioAdouci = 0.90 + (lumPiece * 0.20);
-      } else {
-         // Une pièce claire garde la clim blanche, une pièce sombre l'assombrit (ancienne logique blanche)
-         ratioAdouci = 0.60 + (lumPiece * 0.50); 
-      }
-      ratioAdouci = math.max(0.40, math.min(1.1, ratioAdouci)); 
+      cv.Mat grayLisse = cv.cvtColor(murLisse, cv.COLOR_BGR2GRAY);
+      cv.Mat grayLisseF = grayLisse.convertTo(cv.MatType.CV_32FC1);
 
-      // Ajuste le contraste et l'exposition de la clim pour correspondre au mur.
-      var minMaxMur = cv.minMaxLoc(grayMur);
-      double niveauNoirMur = minMaxMur.$1; 
-      niveauNoirMur = math.min(niveauNoirMur, 40.0); // Sécurité pour éviter le brouillard gris
+      cv.Scalar meanClimV = cv.mean(hsvChannels[2], mask: maskBinaire);
+      double lumaClimNativeHSV = math.max(meanClimV.val[0], 1.0);
 
-      double ratioContraste = ratioAdouci * ((255.0 - niveauNoirMur) / 255.0);
-      cv.Mat vScaled = cv.addWeighted(hsvChannels[2], ratioContraste, hsvChannels[2], 0.0, niveauNoirMur);
-
-      // Crée une carte de la lumière ambiante pour simuler les ombres structurelles de la pièce sur la clim.
-      cv.Mat smallGris = cv.resize(grayMur, (wMur ~/ 8, hMur ~/ 8), interpolation: cv.INTER_AREA);
-      
-      // Un flou important permet d'isoler la variation de lumière globale des détails du mur (motifs, peinture).
-      cv.Mat smallFlouLumiere = cv.gaussianBlur(smallGris, (41, 41), 0.0);
-      cv.Mat carteLumiere8u = cv.resize(smallFlouLumiere, (wMur, hMur), interpolation: cv.INTER_CUBIC);
-
-      cv.Mat carteLumiereF = carteLumiere8u.convertTo(cv.MatType.CV_32FC1);
-      
-      // Calcule la lumière moyenne sous la clim pour normaliser.
-      cv.Scalar moyenneLumiere = cv.mean(carteLumiereF, mask: maskBinaire);
-      double baseLumiere = math.max(moyenneLumiere.val[0], 1.0);
-
-      cv.Mat ratioMap = carteLumiereF.convertTo(cv.MatType.CV_32FC1, alpha: 1.0 / baseLumiere);
-
-      // Limite l'assombrissement pour éviter les artefacts (effet "fantôme").
+      // Le Ratio magique : Lumière du Mur / Lumière de la Clim
+      cv.Mat ratioMap = grayLisseF.convertTo(cv.MatType.CV_32FC1, alpha: 1.0 / lumaClimNativeHSV);
       cv.Mat matriceUn = cv.Mat.zeros(hMur, wMur, cv.MatType.CV_32FC1)..setTo(cv.Scalar.all(1.0));
-      cv.Mat ratioSecurise = cv.addWeighted(ratioMap, 0.25, matriceUn, 0.75, 0.0);
+      cv.Mat ratioSecurise = cv.addWeighted(ratioMap, 0.35, matriceUn, 0.65, 0.0);
 
-      cv.Mat vChannelF = vScaled.convertTo(cv.MatType.CV_32FC1);
+      cv.Mat vChannelF = hsvChannels[2].convertTo(cv.MatType.CV_32FC1);
       cv.Mat vShadowedF = cv.multiply(vChannelF, ratioSecurise);
-      hsvChannels[2] = vShadowedF.convertTo(cv.MatType.CV_8UC1);
+
+      // SÉCURITÉ ANTI-SUREXPOSITION : On empêche les pixels de dépasser 245/255.
+      cv.Mat vCappedF = cv.threshold(vShadowedF, 245.0, 245.0, cv.THRESH_TRUNC).$2;
+
+      hsvChannels[2] = vCappedF.convertTo(cv.MatType.CV_8UC1);
 
       cv.Mat climHsvFinal = cv.merge(hsvChannels);
-      cv.Mat climRgbFinal = cv.cvtColor(climHsvFinal, cv.COLOR_HSV2BGR);
+      cv.Mat climRgbFinalPropre = cv.cvtColor(climHsvFinal, cv.COLOR_HSV2BGR);
+
+      // =========================================================================
+      // === PHASE 5.5 : DÉGRADATION RÉALISTE (CAPTEUR PHOTO) ===
+      // =========================================================================
+      
+      // Léger flou pour tuer la netteté parfaite (CGI) de l'image de synthèse 3D
+      cv.Mat climBrouillee = cv.gaussianBlur(climRgbFinalPropre, (3, 3), 0.6);
+
+      // Ajout de grain (bruit numérique) pour "ancrer" la clim dans la texture de la vraie photo
+      cv.Mat climFloat = climBrouillee.convertTo(cv.MatType.CV_32FC3);
+      cv.Mat noise = cv.Mat.zeros(hMur, wMur, cv.MatType.CV_32FC3);
+      
+      // Génère un bruit gaussien aléatoire simulant l'ISO du téléphone
+      cv.randn(noise, cv.Scalar.all(0.0), cv.Scalar.all(8.0)); 
+      cv.Mat climNoisyFloat = cv.add(climFloat, noise);
+      
+      cv.Mat climRgbFinal = climNoisyFloat.convertTo(cv.MatType.CV_8UC3);
 
       // =========================================================================
       // === PHASE 6 : FUSION ALPHA BLENDING ===
       // =========================================================================
 
-      // Fusionne l'image de la climatisation traitée avec le mur (avec son ombre).
       cv.Mat alpha3_8u = cv.cvtColor(alphaMask, cv.COLOR_GRAY2BGR);
       cv.Mat invAlpha3_8u = cv.bitwiseNOT(alpha3_8u);
 
@@ -544,7 +510,6 @@ class TraitementImage {
       cv.Mat resultF = cv.add(fgBlended, bgBlended);
       cv.Mat resultatFinal = resultF.convertTo(cv.MatType.CV_8UC3);
 
-      // Encode l'image finale en JPEG.
       var encodeResult = cv.imencode('.jpg', resultatFinal);
       return encodeResult.$2;
 
