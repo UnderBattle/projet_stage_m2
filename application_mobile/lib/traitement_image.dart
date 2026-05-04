@@ -5,17 +5,16 @@ import 'package:tflite_flutter/tflite_flutter.dart';
 import 'package:image/image.dart' as img;
 
 class TraitementImage {
-
   // Fonctions "passerelles" pour exécuter les traitements lourds dans un Isolate.
   // Cela évite de geler l'interface utilisateur.
   static Future<Uint8List?> effacerAutocollantIsolate(Map<String, dynamic> params) async {
     return await effacerAutocollant(
       photoPath: params['photoPath'] as String,
       pointsIA: (params['pointsIA'] as List).map((e) => Map<String, double>.from(e)).toList(),
-      lamaBytes: params['lamaBytes'] as Uint8List?, 
+      lamaBytes: params['lamaBytes'] as Uint8List?,
     );
   }
-  
+
   static Future<Uint8List?> incrusterClimatisationIsolate(Map<String, dynamic> params) async {
     return await incrusterClimatisation(
       fondPropreBytes: params['fondPropreBytes'] as Uint8List, // NOUVEAU : On récupère l'image déjà nettoyée
@@ -29,7 +28,7 @@ class TraitementImage {
       largeurMm: params['largeurMm'] as double, // AJOUT : Passage de la largeur dynamique
     );
   }
-  
+
   /// Trie les 4 points reçus de l'IA pour les ordonner : Haut-Gauche, Haut-Droit, Bas-Droit, Bas-Gauche.
   static List<Map<String, double>> trierPoints(List<Map<String, double>> points) {
     List<Map<String, double>> pts = List.from(points);
@@ -123,14 +122,13 @@ class TraitementImage {
           
           // LaMa exige du RGB, OpenCV utilise du BGR
           cv.Mat imgRGB = cv.cvtColor(img512, cv.COLOR_BGR2RGB);
-
           Uint8List rgbBytes = imgRGB.data;
           Uint8List maskBytes = mask512.data;
 
           // Préparation des tenseurs pour TFLite
           var inputImg = List.generate(1, (i) => List.generate(512, (j) => List.generate(512, (k) => List.generate(3, (l) => 0.0))));
           var inputMask = List.generate(1, (i) => List.generate(512, (j) => List.generate(512, (k) => List.generate(1, (l) => 0.0))));
-
+          
           int idx = 0;
           for (int y = 0; y < 512; y++) {
             for (int x = 0; x < 512; x++) {
@@ -148,8 +146,8 @@ class TraitementImage {
           
           var tensor0 = interpreter.getInputTensor(0);
           List<Object> inputs = (tensor0.shape.last == 3) ? [inputImg, inputMask] : [inputMask, inputImg];
-
           var outputImg = List.generate(1, (i) => List.generate(512, (j) => List.generate(512, (k) => List.generate(3, (l) => 0.0))));
+          
           interpreter.runForMultipleInputs(inputs, {0: outputImg});
 
           // Reconstruction de l'image (Retour en BGR pour OpenCV)
@@ -210,7 +208,6 @@ class TraitementImage {
 
         int srcX = rectX;
         int srcY = rectY;
-
         if (rectY - rectH > 0) {
           srcY = rectY - rectH; 
         } else if (rectY + rectH * 2 < hMur) {
@@ -260,7 +257,6 @@ class TraitementImage {
           // On colle le petit carré fusionné à sa place sur l'image finale
           petitResultImg.copyTo(resultImg.region(cropRect));
         }
-
       } catch (e) {
         print("[OpenCV] Erreur lors du blending : $e");
         resultImg = murRepare; // Sécurité
@@ -269,6 +265,7 @@ class TraitementImage {
       // Encode l'image finale en JPEG.
       var encodeResult = cv.imencode('.jpg', resultImg);
       return encodeResult.$2;
+      
     } catch (e) {
       print("[OpenCV] Erreur lors de la génération du fond propre : $e");
       return null;
@@ -308,10 +305,8 @@ class TraitementImage {
       // =========================================================================
       // === PHASE 2 : CALCUL DE LA PERSPECTIVE STABILISEE ===
       // =========================================================================
-
       cv.Point ptHg = ptsOri[0];
       cv.Point ptHd = ptsOri[1];
-
       double dx = (ptHd.x - ptHg.x).toDouble();
       double dy = (ptHd.y - ptHg.y).toDouble();
       double largeurPx = math.sqrt(dx * dx + dy * dy);
@@ -337,9 +332,8 @@ class TraitementImage {
       // =========================================================================
       // === PHASE 3 : TAILLE RÉELLE ET DÉFORMATION 3D ===
       // =========================================================================
-
       cv.Mat climMat = cv.imdecode(climBytes, cv.IMREAD_UNCHANGED);
-
+      
       // Remplacement des variables en dur par les paramètres dynamiques
       double hClimMm = hauteurMm; 
       double wClimMm = largeurMm; 
@@ -355,11 +349,12 @@ class TraitementImage {
         cv.Point(wAutoPx.toInt(), hAutoPx.toInt()),
         cv.Point(0, hAutoPx.toInt())
       ];
+
       var vecPtsSrc = cv.VecPoint.fromList(ptsSrc);
       var vecPtsDst = cv.VecPoint.fromList(ptsDstLisses);
       cv.Mat hMatrix = cv.getPerspectiveTransform(vecPtsSrc, vecPtsDst);
-
       cv.Mat climWarped = cv.warpPerspective(climMat, hMatrix, (wMur, hMur));
+
       var channels = cv.split(climWarped);
       cv.Mat alphaMaskOriginale = channels[3]; 
 
@@ -368,10 +363,9 @@ class TraitementImage {
       // à devenir 100% opaques (255) pour que les lattes de bois ne passent plus à travers.
       cv.Mat alphaBinaire = cv.threshold(alphaMaskOriginale, 127, 255, cv.THRESH_BINARY).$2;
 
-      // Anti-Halo (Érosion douce du masque)
+      // Anti-Halo (érosion douce du masque)
       cv.Mat kernelErode = cv.Mat.ones(3, 3, cv.MatType.CV_8UC1);
       cv.Mat alphaErode = cv.erode(alphaBinaire, kernelErode);
-
       cv.Mat alphaMask = cv.gaussianBlur(alphaErode, (3, 3), 0.0);
       
       cv.Mat climBgr = cv.cvtColor(climWarped, cv.COLOR_BGRA2BGR);
@@ -396,17 +390,16 @@ class TraitementImage {
 
       cv.Scalar meanSobelX = cv.mean(sobelX, mask: maskBinaireSmall);
       cv.Scalar meanSobelY = cv.mean(sobelY, mask: maskBinaireSmall);
-
       double gradX = meanSobelX.val[0];
       double gradY = meanSobelY.val[0];
-
       double norme = math.sqrt(gradX * gradX + gradY * gradY) + 0.0001; 
+
       double dirLumiereX = gradX / norme;
       double dirLumiereY = gradY / norme;
 
       double ratioVolume = profondeurMm / 100.0; 
       double forceOmbre = 12.0 * ratioVolume; 
-
+      
       double shiftX = norme < 1.0 ? (3.0 * ratioVolume) : -dirLumiereX * forceOmbre;
       double shiftY = norme < 1.0 ? (8.0 * ratioVolume) : -dirLumiereY * forceOmbre;
 
@@ -420,6 +413,7 @@ class TraitementImage {
       cv.Mat smallAlpha = cv.resize(alphaOmbre, (wMur ~/ 4, hMur ~/ 4));
       int baseBlur = (5 + (ratioVolume * 4)).toInt();
       if (baseBlur % 2 == 0) baseBlur += 1; 
+      
       cv.Mat smallOmbreFloue = cv.gaussianBlur(smallAlpha, (baseBlur, baseBlur), 0.0);
       cv.Mat ombreFloueDirectionnelle = cv.resize(smallOmbreFloue, (wMur, hMur), interpolation: cv.INTER_CUBIC);
 
@@ -454,22 +448,29 @@ class TraitementImage {
       // =========================================================================
       // === PHASE 5 : LUMIÈRE ET TEMPÉRATURE DE COULEUR INTELLIGENTE ===
       // =========================================================================
+      
       // VARIABLES DE RÉGLAGES DE LA COULEUR ET LUMINOSITÉ
       final double reglageMixAmbiancePiece = 0.65; // Teinte prise sur l'ambiance de la pièce
-      final double reglageMixCouleurMur = 0.35;    //  Teinte prise sur la couleur du mur juste derrière
+      final double reglageMixCouleurMur = 0.35;    // Teinte prise sur la couleur du mur juste derrière
       
       final double reglageTeinteClimBlanche = 0.30; // Capacité du plastique blanc à absorber la teinte (miroir)
       final double reglageTeinteClimNoire = 0.08;   // Capacité du plastique noir à absorber la teinte
-
-      final double reglageInfluenceOmbreSurBlanc = 0.40; // Pourcentage de l'ombre du mur affecte la machine blanche
-      final double reglageInfluenceOmbreSurNoir = 0.50;  // Pourcentage de l'ombre du mur affecte la machine noire
       
-      final double reglageLuminositeClimBlanche = 1.15; // Pourcentage supplémentaire de luminosité boostée sur le plastique blanc
-      final double reglageLuminositeClimNoire = 0.75;   // Réduction pour que la clim noire reste bien mate et ne brille pas
+      final double reglageInfluenceOmbreSurBlanc = 0.65;
+      
+      // POUR RÉGLER LA NOIRCEUR : Joue avec ces deux variables
+      // 1. Influence du mur : Plus c'est haut (ex: 0.25), plus un mur clair va "laver" ou éclaircir la clim noire.
+      final double reglageInfluenceOmbreSurNoir = 0.20;  // Modifiable (Était 0.15)
+      
+      final double reglageLuminositeClimBlanche = 1.0; 
+      
+      // Luminosité de base : C'est le réglage principal pour la noirceur !
+      // 0.70 = très sombre, 0.80 = moyen, 0.90 = gris foncé.
+      final double reglageLuminositeClimNoire = 0.78;   // Modifiable (Était 0.70)
 
       cv.Scalar meanClimColorO = cv.mean(climBgr, mask: maskBinaire);
       double lumaNativeClim = (0.114 * meanClimColorO.val[0]) + (0.587 * meanClimColorO.val[1]) + (0.299 * meanClimColorO.val[2]);
-      bool estClimNoire = lumaNativeClim < 80.0; 
+      bool estClimNoire = lumaNativeClim < 80.0;
 
       cv.Mat murUltraSmall = cv.resize(resultImg, (wMur ~/ 32, hMur ~/ 32), interpolation: cv.INTER_AREA);
       cv.Mat murUltraFlou = cv.gaussianBlur(murUltraSmall, (15, 15), 0.0);
@@ -492,7 +493,6 @@ class TraitementImage {
       double tintR = rMur / lumMurLocal;
 
       double forceTeinte = estClimNoire ? reglageTeinteClimNoire : reglageTeinteClimBlanche; 
-
       tintB = 1.0 + (tintB - 1.0) * forceTeinte;
       tintG = 1.0 + (tintG - 1.0) * forceTeinte;
       tintR = 1.0 + (tintR - 1.0) * forceTeinte;
@@ -516,8 +516,12 @@ class TraitementImage {
       cv.Scalar meanClimV = cv.mean(hsvChannels[2], mask: maskBinaire);
       double lumaClimNativeHSV = math.max(meanClimV.val[0], 1.0);
 
+      // FIX CLIM NOIRE GRISE : On empêche le ratio d'exploser si la clim est très sombre et le mur très clair.
+      // Un mur à 255 / une clim à 20 = multiplicateur énorme de 12.75 ! On force un dénominateur plus élevé pour le noir.
+      double denominateurLuma = estClimNoire ? math.max(lumaClimNativeHSV, 130.0) : lumaClimNativeHSV;
+
       // Le Ratio magique : Lumière du Mur / Lumière de la Clim
-      cv.Mat ratioMap = grayLisseF.convertTo(cv.MatType.CV_32FC1, alpha: 1.0 / lumaClimNativeHSV);
+      cv.Mat ratioMap = grayLisseF.convertTo(cv.MatType.CV_32FC1, alpha: 1.0 / denominateurLuma);
       cv.Mat matriceUn = cv.Mat.zeros(hMur, wMur, cv.MatType.CV_32FC1)..setTo(cv.Scalar.all(1.0));
       
       // Influence dynamique basée sur nos réglages
@@ -525,7 +529,6 @@ class TraitementImage {
       double influenceClim = 1.0 - influenceMur; // C'est la balance opposée mathématique
       
       cv.Mat ratioSecurise = cv.addWeighted(ratioMap, influenceMur, matriceUn, influenceClim, 0.0);
-
       cv.Mat vChannelF = hsvChannels[2].convertTo(cv.MatType.CV_32FC1);
       cv.Mat vShadowedF = cv.multiply(vChannelF, ratioSecurise);
 
@@ -536,29 +539,45 @@ class TraitementImage {
          vShadowedF = vShadowedF.convertTo(cv.MatType.CV_32FC1, alpha: reglageLuminositeClimBlanche); 
       }
 
-      // FIX CONTRE-JOUR : On analyse le niveau de noir LOCAL de la photo autour de la clim.
-      // Si la photo est éblouie par le soleil (contre-jour), les noirs sont "gris" (ex: 60/255).
-      // On rehausse les zones sombres de la clim pour qu'elles épousent ce voile gris atmosphérique !
+      // FIX CONTRE-JOUR REVISITÉ : Adaptabilité au contraste local
+      // L'ancienne méthode avec minMax prenait la valeur brute, ce qui ajoutait "+100" à une clim noire
+      // sur un mur blanc pur (la rendant grise fluo). 
+      // La nouvelle méthode analyse la "dureté" de la lumière via l'amplitude du contraste local.
       cv.Rect rectClim = cv.boundingRect(cv.VecPoint.fromList(ptsDstLisses));
       int rx = math.max(0, rectClim.x - 20);
       int ry = math.max(0, rectClim.y - 20);
       int rw = math.min(wMur - rx, rectClim.width + 40);
       int rh = math.min(hMur - ry, rectClim.height + 40);
       
-      double niveauNoirLocal = 0.0;
+      double voileAtmospherique = 0.0;
+      
       if (rw > 0 && rh > 0) {
         cv.Mat roiMurGray = grayMur.region(cv.Rect(rx, ry, rw, rh));
         var minMaxRoi = cv.minMaxLoc(roiMurGray);
-        niveauNoirLocal = minMaxRoi.$1; 
+        double minLocal = minMaxRoi.$1;
+        double maxLocal = minMaxRoi.$2;
+        
+        // Calcul d'un proxy pour l'écart-type (contraste local)
+        double contrasteLocal = math.max(0.0, maxLocal - minLocal);
+        
+        // Plus le contraste est élevé, plus le risque de contre-jour vif est fort.
+        voileAtmospherique = (contrasteLocal * 0.15); 
+        
+        // Sécurité stricte : On bride sévèrement le voile sur les machines noires
+        // pour qu'elles restent noires, même sur un mur très contrasté.
+        if (estClimNoire) {
+           voileAtmospherique = math.min(voileAtmospherique, 8.0); // Plafond très bas pour le noir
+        } else {
+           voileAtmospherique = math.min(voileAtmospherique, 25.0); // Plafond plus permissif pour le blanc
+        }
       }
 
-      // On compense le contre-jour (Level Lift) pour éviter le syndrome du "noir absolu artificiel"
-      double ratioLift = (255.0 - niveauNoirLocal) / 255.0;
-      cv.Mat vLiftedF = cv.addWeighted(vShadowedF, ratioLift, vShadowedF, 0.0, niveauNoirLocal);
+      // On compense le contre-jour (Level Lift) de façon sécurisée
+      double ratioLift = (255.0 - voileAtmospherique) / 255.0;
+      cv.Mat vLiftedF = cv.addWeighted(vShadowedF, ratioLift, vShadowedF, 0.0, voileAtmospherique);
 
       // SÉCURITÉ ANTI-SUREXPOSITION : On empêche les pixels de dépasser 245/255.
       cv.Mat vCappedF = cv.threshold(vLiftedF, 245.0, 245.0, cv.THRESH_TRUNC).$2;
-
       hsvChannels[2] = vCappedF.convertTo(cv.MatType.CV_8UC1);
 
       cv.Mat climHsvFinal = cv.merge(hsvChannels);
@@ -584,7 +603,6 @@ class TraitementImage {
       // =========================================================================
       // === PHASE 6 : FUSION ALPHA BLENDING ===
       // =========================================================================
-
       cv.Mat alpha3_8u = cv.cvtColor(alphaMask, cv.COLOR_GRAY2BGR);
       cv.Mat invAlpha3_8u = cv.bitwiseNOT(alpha3_8u);
 
@@ -602,7 +620,7 @@ class TraitementImage {
 
       var encodeResult = cv.imencode('.jpg', resultatFinal);
       return encodeResult.$2;
-
+      
     } catch (e) {
       print("[OpenCV] ERREUR FATALE : $e");
       return null;
