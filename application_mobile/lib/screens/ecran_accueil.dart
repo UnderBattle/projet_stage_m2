@@ -22,13 +22,16 @@ class _EcranAccueilState extends State<EcranAccueil> {
   
   // Indique si une image est en cours de redimensionnement pour afficher l'écran de chargement.
   bool _isOptimizing = false;
+  
+  // AJOUT : Indique si les lourds modèles IA sont bien chargés en RAM avant d'autoriser l'action
+  bool _isIaReady = false;
 
   @override
   void initState() {
     super.initState();
     
-    // On lance le chargement de l'IA en tâche de fond
-    IAService().initModels();
+    // On lance le chargement de l'IA en tâche de fond et on surveille quand c'est terminé (AJOUT)
+    _preparerIA();
 
     // Initialise le contrôleur avec la première caméra disponible (généralement la caméra arrière) en haute résolution.
     if (widget.cameras.isNotEmpty) {
@@ -42,6 +45,16 @@ class _EcranAccueilState extends State<EcranAccueil> {
         setState(() {});
       }).catchError((Object e) {
         print("Erreur initialisation caméra : $e");
+      });
+    }
+  }
+
+  // AJOUT : Fonction asynchrone pour mettre à jour l'interface une fois l'IA chargée
+  Future<void> _preparerIA() async {
+    await IAService().initModels();
+    if (mounted) {
+      setState(() {
+        _isIaReady = true;
       });
     }
   }
@@ -153,29 +166,50 @@ class _EcranAccueilState extends State<EcranAccueil> {
               Padding(
                 padding: const EdgeInsets.only(bottom: 40.0, left: 16.0, right: 16.0),
                 // Boutons d'actions pour choisir la source de l'image.
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                // AJOUT : Ajout d'une Column pour pouvoir glisser le texte de chargement de l'IA sous les boutons
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
                   children: [
-                    ElevatedButton.icon(
-                      onPressed: _isOptimizing ? null : _ouvrirGalerie,
-                      icon: const Icon(Icons.photo_library),
-                      label: const Text('Galerie'),
-                      style: ElevatedButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(horizontal: 30, vertical: 15),
-                        backgroundColor: Colors.white,
-                        foregroundColor: Colors.teal,
-                      ),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                      children: [
+                        ElevatedButton.icon(
+                          // AJOUT : On désactive visuellement le bouton si l'IA n'est pas prête
+                          onPressed: (_isOptimizing || !_isIaReady) ? null : _ouvrirGalerie,
+                          icon: const Icon(Icons.photo_library),
+                          label: const Text('Galerie'),
+                          style: ElevatedButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(horizontal: 30, vertical: 15),
+                            backgroundColor: Colors.white,
+                            foregroundColor: Colors.teal,
+                          ),
+                        ),
+                        ElevatedButton.icon(
+                          // AJOUT : On désactive visuellement le bouton si l'IA n'est pas prête
+                          onPressed: (_isOptimizing || !_isIaReady) ? null : _prendrePhoto,
+                          icon: const Icon(Icons.camera_alt),
+                          label: const Text('Photo'),
+                          style: ElevatedButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(horizontal: 30, vertical: 15),
+                            backgroundColor: Theme.of(context).colorScheme.primary,
+                            foregroundColor: Theme.of(context).colorScheme.onPrimary,
+                          ),
+                        ),
+                      ],
                     ),
-                    ElevatedButton.icon(
-                      onPressed: _isOptimizing ? null : _prendrePhoto,
-                      icon: const Icon(Icons.camera_alt),
-                      label: const Text('Photo'),
-                      style: ElevatedButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(horizontal: 30, vertical: 15),
-                        backgroundColor: Theme.of(context).colorScheme.primary,
-                        foregroundColor: Theme.of(context).colorScheme.onPrimary,
+                    // AJOUT : Feedback visuel discret pour prévenir que l'IA chauffe
+                    if (!_isIaReady)
+                      const Padding(
+                        padding: EdgeInsets.only(top: 15.0),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            SizedBox(width: 15, height: 15, child: CircularProgressIndicator(strokeWidth: 2)),
+                            SizedBox(width: 10),
+                            Text("Chargement du moteur IA...", style: TextStyle(color: Colors.grey, fontStyle: FontStyle.italic)),
+                          ],
+                        ),
                       ),
-                    ),
                   ],
                 ),
               ),

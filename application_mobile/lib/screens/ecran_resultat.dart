@@ -8,6 +8,7 @@ import 'package:flutter/services.dart';
 import '../utils/image_utils.dart';
 import '../traitement_image.dart';
 import '../services/ia_service.dart';
+import '../services/catalogue_service.dart';
 
 /// Écran affichant l'image capturée, exécutant la détection de l'IA, 
 /// et permettant à l'utilisateur d'incruster et de manipuler des modèles de climatisation.
@@ -24,27 +25,9 @@ class _EcranResultatState extends State<EcranResultat> {
   // =========================================================================
   // === VARIABLES D'ÉTAT ===
   // =========================================================================
-  
-  // Catalogue rangé par catégories pour faciliter l'affichage et la sélection dans l'UI.
-  final Map<String, List<Map<String, dynamic>>> catalogueGlobal = {
-    'Climatisations': [
-      {
-        'nom': 'Takao Plus Blanc',
-        'chemin': 'assets/installations/clim_takao_plus/8e74c5374539-takao-plus-blanc-face-atlantic.png',
-        'profondeur': 240.0
-      },
-      {
-        'nom': 'Takao Plus Noir',
-        'chemin': 'assets/installations/clim_takao_plus/baae79054b9d-takao-plus-noir-face-atlantic.png',
-        'profondeur': 240.0
-      }
-    ],
-    'Pompes à Chaleur': [], 
-    'Chaudières': [],       
-  };
 
   String _categorieSelectionnee = 'Climatisations';
-  String? _modeleSelectionneChemin;
+  Equipement? _modeleSelectionne;
   bool _isProcessing = true;
   String _loadingMessage = "Analyse en cours...";
   
@@ -271,7 +254,7 @@ class _EcranResultatState extends State<EcranResultat> {
   }
 
   Future<void> _genererIncrustation() async {
-    if (_pointsCibles == null || _modeleSelectionneChemin == null || _imageFondPropreBytes == null) return;
+    if (_pointsCibles == null || _modeleSelectionne == null || _imageFondPropreBytes == null) return;
     
     setState(() {
       _isProcessing = true;
@@ -279,12 +262,14 @@ class _EcranResultatState extends State<EcranResultat> {
     });
 
     try {
-      String climPath = _modeleSelectionneChemin!;
+      String climPath = _modeleSelectionne!.chemin;
       final ByteData data = await DefaultAssetBundle.of(context).load(climPath);
       Uint8List climBytes = data.buffer.asUint8List();
       
-      double profondeur = catalogueGlobal[_categorieSelectionnee]!
-          .firstWhere((c) => c['chemin'] == climPath)['profondeur'] as double;
+      // On récupère toutes les dimensions directement depuis l'objet Equipement
+      double profondeur = _modeleSelectionne!.profondeur;
+      double hauteur = _modeleSelectionne!.hauteur;
+      double largeur = _modeleSelectionne!.largeur;
 
       Uint8List? resultImage = await compute(TraitementImage.incrusterClimatisationIsolate, {
         'fondPropreBytes': _imageFondPropreBytes!,
@@ -294,6 +279,8 @@ class _EcranResultatState extends State<EcranResultat> {
         'decalageY': _decalageNotifier.value.dy,
         'climAssetPath': climPath,
         'profondeurMm': profondeur,
+        'hauteurMm': hauteur, 
+        'largeurMm': largeur, 
       });
 
       if (resultImage != null) {
@@ -451,8 +438,16 @@ class _EcranResultatState extends State<EcranResultat> {
     double dy = ptHdYOrig - ptHgYOrig;
     double autoWPxOrig = math.sqrt(dx * dx + dy * dy);
     
-    double climWPxOrig = (798.0 / 50.0) * autoWPxOrig;
-    double climHPxOrig = climWPxOrig * (270.0 / 798.0);
+    // On récupère les dimensions depuis le catalogue pour le calcul d'affichage UI
+    double largeurMm = 798.0; 
+    double hauteurMm = 270.0;
+    if (_modeleSelectionne != null) {
+      largeurMm = _modeleSelectionne!.largeur;
+      hauteurMm = _modeleSelectionne!.hauteur;
+    }
+
+    double climWPxOrig = (largeurMm / 50.0) * autoWPxOrig;
+    double climHPxOrig = climWPxOrig * (hauteurMm / largeurMm);
     double climScreenW = climWPxOrig * scale;
     double climScreenH = climHPxOrig * scale;
     double angleRad = math.atan2(dy, dx);
@@ -531,7 +526,7 @@ class _EcranResultatState extends State<EcranResultat> {
             }
           ),
 
-        if (_modeleSelectionneChemin != null && catalogueGlobal[_categorieSelectionnee]!.any((c) => c['chemin'] == _modeleSelectionneChemin))
+        if (_modeleSelectionne != null)
           ValueListenableBuilder<Offset>(
             valueListenable: _decalageNotifier,
             builder: (context, decalage, _) {
@@ -569,7 +564,7 @@ class _EcranResultatState extends State<EcranResultat> {
                         alignment: Alignment.topLeft, 
                         child: Opacity(
                           opacity: isDragging ? 0.65 : 0.0, 
-                          child: Image.asset(_modeleSelectionneChemin!, fit: BoxFit.fill),
+                          child: Image.asset(_modeleSelectionne!.chemin, fit: BoxFit.fill),
                         ),
                       ),
                     ),
@@ -606,6 +601,8 @@ class _EcranResultatState extends State<EcranResultat> {
   }
 
   Widget _buildCatalogue() {
+    final catalogueGlobal = CatalogueService().catalogueGlobal;
+
     return Container(
       height: 190,
       padding: const EdgeInsets.only(top: 10, bottom: 10),
@@ -662,13 +659,13 @@ class _EcranResultatState extends State<EcranResultat> {
                     itemCount: catalogueGlobal[_categorieSelectionnee]!.length,
                     itemBuilder: (context, index) {
                       final clim = catalogueGlobal[_categorieSelectionnee]![index];
-                      final bool isSelected = _modeleSelectionneChemin == clim['chemin'];
+                      final bool isSelected = _modeleSelectionne == clim;
 
                       return GestureDetector(
                         onTap: () {
                           if (_isProcessing) return;
                           setState(() {
-                            _modeleSelectionneChemin = clim['chemin'];
+                            _modeleSelectionne = clim;
                             _genererIncrustation();
                           });
                         },
@@ -685,10 +682,10 @@ class _EcranResultatState extends State<EcranResultat> {
                           child: Column(
                             mainAxisAlignment: MainAxisAlignment.center,
                             children: [
-                              Expanded(child: Padding(padding: const EdgeInsets.all(8.0), child: Image.asset(clim['chemin']!, fit: BoxFit.contain))),
+                              Expanded(child: Padding(padding: const EdgeInsets.all(8.0), child: Image.asset(clim.chemin, fit: BoxFit.contain))),
                               Padding(
                                 padding: const EdgeInsets.symmetric(horizontal: 4.0, vertical: 8.0),
-                                child: Text(clim['nom']!, style: TextStyle(fontSize: 12, fontWeight: isSelected ? FontWeight.bold : FontWeight.normal, color: isSelected ? Colors.teal.shade800 : Colors.black87), textAlign: TextAlign.center, maxLines: 2),
+                                child: Text(clim.nom, style: TextStyle(fontSize: 12, fontWeight: isSelected ? FontWeight.bold : FontWeight.normal, color: isSelected ? Colors.teal.shade800 : Colors.black87), textAlign: TextAlign.center, maxLines: 2),
                               ),
                             ],
                           ),
@@ -766,7 +763,7 @@ class _EcranResultatState extends State<EcranResultat> {
                     ),
                   ),
                   
-                  if (_modeleSelectionneChemin != null && !_isManualPlacementMode)
+                  if (_modeleSelectionne != null && !_isManualPlacementMode)
                     ValueListenableBuilder<Offset>(
                       valueListenable: _decalageNotifier,
                       builder: (context, decalage, _) {
