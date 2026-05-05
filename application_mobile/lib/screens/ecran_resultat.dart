@@ -10,10 +10,21 @@ import '../traitement_image.dart';
 import '../services/ia_service.dart';
 import '../services/catalogue_service.dart';
 
+// Structure de données pour mémoriser la goulotte unique
+class LigneGoulotte {
+  final Offset start;
+  final Offset end;
+  LigneGoulotte(this.start, this.end);
+}
+
+// Les différents états d'interaction avec la goulotte
+enum DragMode { none, start, end, body, drawingNew }
+
 /// Écran affichant l'image capturée, exécutant la détection de l'IA, 
 /// et permettant à l'utilisateur d'incruster et de manipuler des modèles de climatisation.
 class EcranResultat extends StatefulWidget {
   final String photoPath;
+
   const EcranResultat({super.key, required this.photoPath});
 
   @override
@@ -21,19 +32,19 @@ class EcranResultat extends StatefulWidget {
 }
 
 class _EcranResultatState extends State<EcranResultat> {
-  
   // =========================================================================
   // === VARIABLES D'ÉTAT ===
   // =========================================================================
-
   String _categorieSelectionnee = 'Climatisations';
   Equipement? _modeleSelectionne;
+  
   bool _isProcessing = true;
   String _loadingMessage = "Analyse en cours...";
   
-  Uint8List? _imageResultatBytes;
+  Uint8List? _imageResultatBytes; // L'image finale (avec goulotte cuite par OpenCV)
+  Uint8List? _imageResultatSansGoulotteBytes; // Cache : L'image avec Clim mais SANS goulotte
   Uint8List? _imageFondPropreBytes;
-
+  
   int? _imageWidth;
   int? _imageHeight;
   List<Map<String, double>>? _pointsCibles;
@@ -49,6 +60,15 @@ class _EcranResultatState extends State<EcranResultat> {
   final ValueNotifier<double> _splitNotifier = ValueNotifier(1.0);
   final ValueNotifier<bool> _isDraggingNotifier = ValueNotifier(false);
 
+  // Variables d'état pour la Goulotte interactive
+  bool _isDrawGoulotteMode = false;
+  final ValueNotifier<LigneGoulotte?> _goulotteNotifier = ValueNotifier(null);
+  final ValueNotifier<bool> _isDraggingGoulotteNotifier = ValueNotifier(false);
+
+  // Variables temporaires pour ne pas casser le drag du tout premier tracé
+  Offset? _goulotteStartOrig;
+  final ValueNotifier<Offset?> _goulotteCurrentEndOrigNotifier = ValueNotifier(null);
+
   @override
   void initState() {
     super.initState();
@@ -61,19 +81,45 @@ class _EcranResultatState extends State<EcranResultat> {
     _decalageNotifier.dispose();
     _splitNotifier.dispose();
     _isDraggingNotifier.dispose();
+    _goulotteNotifier.dispose();
+    _isDraggingGoulotteNotifier.dispose();
+    _goulotteCurrentEndOrigNotifier.dispose();
     super.dispose();
+  }
+
+  // Fonction pour empêcher un point de sortir des limites strictes de l'image
+  Offset _clampToImageBounds(Offset point) {
+    if (_imageWidth == null || _imageHeight == null) return point;
+    return Offset(
+      point.dx.clamp(0.0, _imageWidth!.toDouble()),
+      point.dy.clamp(0.0, _imageHeight!.toDouble()),
+    );
+  }
+
+  // Fonction pour forcer la goulotte à être parfaitement droite (horizontale ou verticale)
+  Offset _snapToOrthogonal(Offset reference, Offset target) {
+    double dx = (target.dx - reference.dx).abs();
+    double dy = (target.dy - reference.dy).abs();
+    
+    if (dx > dy) {
+      // Mouvement majoritairement horizontal -> On force l'alignement sur l'axe Y de référence
+      return Offset(target.dx, reference.dy);
+    } else {
+      // Mouvement majoritairement vertical -> On force l'alignement sur l'axe X de référence
+      return Offset(reference.dx, target.dy);
+    }
   }
 
   // =========================================================================
   // === LOGIQUE MÉTIER ET IA ===
   // =========================================================================
-
   Future<void> _analyserImage() async {
     final yoloModel = IAService().yoloModel;
     if (yoloModel == null) return;
 
     try {
       setState(() => _loadingMessage = "Détection de l'autocollant...");
+
       final imageBytes = await File(widget.photoPath).readAsBytes();
       var inputShape = yoloModel.getInputTensor(0).shape;
       bool isNHWC = inputShape[3] == 3;
@@ -90,8 +136,8 @@ class _EcranResultatState extends State<EcranResultat> {
       var inputMatrix = resultMatrixPrep['matrix'];
 
       var outputShape = yoloModel.getOutputTensor(0).shape;
-      var outputMatrix = List.generate(outputShape[0], (i) =>
-        List.generate(outputShape[1], (j) =>
+      var outputMatrix = List.generate(outputShape[0], (i) => 
+        List.generate(outputShape[1], (j) => 
           List.generate(outputShape[2], (k) => 0.0)
         )
       );
@@ -100,7 +146,6 @@ class _EcranResultatState extends State<EcranResultat> {
 
       double maxConfiance = 0;
       int meilleurIndex = 0;
-
       bool isTransposed = outputShape[1] == 21504;
       int nbColonnes = isTransposed ? 21504 : outputShape[2];
 
@@ -119,7 +164,6 @@ class _EcranResultatState extends State<EcranResultat> {
         double boxH = isTransposed ? outputMatrix[0][meilleurIndex][3] : outputMatrix[0][3][meilleurIndex];
         
         double scale = (boxW < 2.0 && boxH < 2.0) ? 1024.0 : 1.0;
-
         List<Map<String, double>> rawPoints = [];
         double confMoyennePoints = 0;
 
@@ -127,7 +171,7 @@ class _EcranResultatState extends State<EcranResultat> {
            int idxX = 5 + (point * 3);
            int idxY = idxX + 1;
            int idxConf = idxX + 2;
-
+           
            double px = isTransposed ? outputMatrix[0][meilleurIndex][idxX] : outputMatrix[0][idxX][meilleurIndex];
            double py = isTransposed ? outputMatrix[0][meilleurIndex][idxY] : outputMatrix[0][idxY][meilleurIndex];
            double pConf = isTransposed ? outputMatrix[0][meilleurIndex][idxConf] : outputMatrix[0][idxConf][meilleurIndex];
@@ -135,7 +179,6 @@ class _EcranResultatState extends State<EcranResultat> {
            confMoyennePoints += pConf;
            rawPoints.add({'x': px * scale, 'y': py * scale});
         }
-
         confMoyennePoints = confMoyennePoints / 4.0;
 
         if (confMoyennePoints >= 0.92) {
@@ -145,7 +188,7 @@ class _EcranResultatState extends State<EcranResultat> {
           double yMin = (boxY * scale) - (boxH * scale) / 2;
           double xMax = (boxX * scale) + (boxW * scale) / 2;
           double yMax = (boxY * scale) + (boxH * scale) / 2;
-
+          
           _pointsCibles = [
             {'x': xMin, 'y': yMin},
             {'x': xMax, 'y': yMin},
@@ -159,14 +202,13 @@ class _EcranResultatState extends State<EcranResultat> {
           _imageFondPropreBytes = await compute(TraitementImage.effacerAutocollantIsolate, {
             'photoPath': widget.photoPath,
             'pointsIA': _pointsCibles!,
-            'lamaBytes': IAService().lamaBytes, 
+            'lamaBytes': IAService().lamaBytes,
           });
         }
-
+        
         setState(() {
           _isProcessing = false;
         });
-
       } else {
         setState(() {
           _pointsCibles = null;
@@ -177,14 +219,13 @@ class _EcranResultatState extends State<EcranResultat> {
           _demanderPlacementManuel();
         });
       }
-
     } catch (e) {
       print("[IA - ERREUR] Exception : $e");
       setState(() {
         _pointsCibles = null;
         _isProcessing = false;
       });
-    } 
+    }
   }
 
   void _demanderPlacementManuel() {
@@ -230,7 +271,6 @@ class _EcranResultatState extends State<EcranResultat> {
 
   Future<void> _validerPlacementManuel() async {
     _transformationController.value = Matrix4.identity();
-
     setState(() {
       _isManualPlacementMode = false;
       _isProcessing = true;
@@ -242,7 +282,7 @@ class _EcranResultatState extends State<EcranResultat> {
       _imageFondPropreBytes = await compute(TraitementImage.effacerAutocollantIsolate, {
         'photoPath': widget.photoPath,
         'pointsIA': _pointsCibles!,
-        'lamaBytes': IAService().lamaBytes, 
+        'lamaBytes': IAService().lamaBytes,
       });
     } catch (e) {
       print("Erreur inpainting manuel : $e");
@@ -271,17 +311,54 @@ class _EcranResultatState extends State<EcranResultat> {
       double hauteur = _modeleSelectionne!.hauteur;
       double largeur = _modeleSelectionne!.largeur;
 
-      Uint8List? resultImage = await compute(TraitementImage.incrusterClimatisationIsolate, {
-        'fondPropreBytes': _imageFondPropreBytes!,
-        'climBytes': climBytes,
-        'pointsIA': _pointsCibles!,
-        'decalageX': _decalageNotifier.value.dx,
-        'decalageY': _decalageNotifier.value.dy,
-        'climAssetPath': climPath,
-        'profondeurMm': profondeur,
-        'hauteurMm': hauteur, 
-        'largeurMm': largeur, 
-      });
+      // MISE EN CACHE OPTIMISÉE : Si on ne fait que bouger la goulotte, on ne recalcule PAS la clim !
+      Uint8List? resultImage = _imageResultatSansGoulotteBytes;
+      
+      if (resultImage == null) {
+         resultImage = await compute(TraitementImage.incrusterClimatisationIsolate, {
+          'fondPropreBytes': _imageFondPropreBytes!,
+          'climBytes': climBytes,
+          'pointsIA': _pointsCibles!,
+          'decalageX': _decalageNotifier.value.dx,
+          'decalageY': _decalageNotifier.value.dy,
+          'climAssetPath': climPath,
+          'profondeurMm': profondeur,
+          'hauteurMm': hauteur, 
+          'largeurMm': largeur, 
+        });
+        _imageResultatSansGoulotteBytes = resultImage; // Sauvegarde dans le cache
+      }
+
+      // Calcul dynamique de la largeur de la goulotte
+      // On calcule la largeur de l'image projetée en coordonnées d'origine (12 MP)
+      double ptHgXOrig = _pointsCibles![0]['x']! * (_imageWidth! / 1024.0);
+      double ptHgYOrig = _pointsCibles![0]['y']! * (_imageHeight! / 1024.0);
+      double ptHdXOrig = _pointsCibles![1]['x']! * (_imageWidth! / 1024.0);
+      double ptHdYOrig = _pointsCibles![1]['y']! * (_imageHeight! / 1024.0);
+      double dx = ptHdXOrig - ptHgXOrig;
+      double dy = ptHdYOrig - ptHgYOrig;
+      double autoWPxOrig = math.sqrt(dx * dx + dy * dy);
+      double climWPxOrig = (largeur / 50.0) * autoWPxOrig;
+      
+      // Variable facilement modifiable pour régler la taille des goulottes
+      double ratioGoulotte = 0.10; // La goulotte fera 1/10ème de la largeur de la clim
+      double largeurGoulotteOrig = climWPxOrig * ratioGoulotte;
+
+      // Application de la goulotte (si elle existe) sur l'image de base
+      if (resultImage != null && _goulotteNotifier.value != null) {
+        setState(() => _loadingMessage = "Incrustation de la goulotte...");
+        
+        final newResult = await compute(TraitementImage.incrusterGoulotteIsolate, {
+          'imageAvecClimBytes': resultImage, // FIX : Suppression du '!' redondant grâce au Sound Null Safety
+          'ptDepartX': _goulotteNotifier.value!.start.dx,
+          'ptDepartY': _goulotteNotifier.value!.start.dy,
+          'ptArriveeX': _goulotteNotifier.value!.end.dx,
+          'ptArriveeY': _goulotteNotifier.value!.end.dy,
+          'largeurPx': largeurGoulotteOrig, 
+        });
+        
+        if (newResult != null) resultImage = newResult;
+      }
 
       if (resultImage != null) {
         setState(() {
@@ -299,13 +376,14 @@ class _EcranResultatState extends State<EcranResultat> {
   void _reinitialiserPosition() {
     if (_isProcessing) return;
     if (_decalageNotifier.value == Offset.zero) return;
-
     _decalageNotifier.value = Offset.zero;
+    _imageResultatSansGoulotteBytes = null; // Invalide le cache car la clim a bougée
     _genererIncrustation();
   }
 
   Future<void> _sauvegarderImage() async {
     if (_imageResultatBytes == null) return;
+
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text('Sauvegarde en cours...'), duration: Duration(milliseconds: 500)),
     );
@@ -316,7 +394,9 @@ class _EcranResultatState extends State<EcranResultat> {
         quality: 100,
         name: "Devis_Clim_${DateTime.now().millisecondsSinceEpoch}", 
       );
+      
       if (!mounted) return;
+      
       if (result['isSuccess'] == true) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Simulation sauvegardée dans la galerie'), backgroundColor: Colors.green, duration: Duration(seconds: 3)),
@@ -428,6 +508,136 @@ class _EcranResultatState extends State<EcranResultat> {
     );
   }
 
+  // Construit les zones tactiles (nœuds) pour éditer une goulotte existante sans bloquer le zoom
+  List<Widget> _buildGoulotteDraggers(LigneGoulotte goulotte, double scale, double offsetX, double offsetY) {
+    Offset p1 = Offset(goulotte.start.dx * scale + offsetX, goulotte.start.dy * scale + offsetY);
+    Offset p2 = Offset(goulotte.end.dx * scale + offsetX, goulotte.end.dy * scale + offsetY);
+    double len = (p2 - p1).distance;
+    double angle = math.atan2(p2.dy - p1.dy, p2.dx - p1.dx);
+
+    return [
+      // 1. Noeud de déplacement complet (Corps de la goulotte)
+      Positioned(
+        left: p1.dx,
+        top: p1.dy - 20, // Décale pour centrer le hitbox sur la ligne
+        child: Transform.rotate(
+          angle: angle,
+          alignment: Alignment.centerLeft,
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onPanStart: (_) => _isDraggingGoulotteNotifier.value = true,
+            onPanUpdate: (details) {
+              // CORRECTION DU BUG DE ROTATION : 
+              // Transform.rotate altère le repère local du GestureDetector.
+              // On ré-oriente le "delta" pour retrouver les vraies coordonnées globales de l'écran.
+              double cosA = math.cos(angle);
+              double sinA = math.sin(angle);
+              double globalDx = details.delta.dx * cosA - details.delta.dy * sinA;
+              double globalDy = details.delta.dx * sinA + details.delta.dy * cosA;
+              Offset deltaOrig = Offset(globalDx, globalDy) / scale;
+              
+              var g = _goulotteNotifier.value!;
+              Offset newStart = g.start + deltaOrig;
+              Offset newEnd = g.end + deltaOrig;
+
+              // Sécurité pour empêcher le corps entier de sortir de l'image
+              double minX = math.min(newStart.dx, newEnd.dx);
+              double maxX = math.max(newStart.dx, newEnd.dx);
+              double minY = math.min(newStart.dy, newEnd.dy);
+              double maxY = math.max(newStart.dy, newEnd.dy);
+              
+              double adjustDx = 0;
+              double adjustDy = 0;
+              
+              if (minX < 0) adjustDx = -minX;
+              if (maxX > _imageWidth!) adjustDx = _imageWidth! - maxX;
+              if (minY < 0) adjustDy = -minY;
+              if (maxY > _imageHeight!) adjustDy = _imageHeight! - maxY;
+              
+              newStart = Offset(newStart.dx + adjustDx, newStart.dy + adjustDy);
+              newEnd = Offset(newEnd.dx + adjustDx, newEnd.dy + adjustDy);
+              
+              _goulotteNotifier.value = LigneGoulotte(newStart, newEnd);
+            },
+            onPanEnd: (_) {
+              _isDraggingGoulotteNotifier.value = false;
+              _genererIncrustation();
+            },
+            onPanCancel: () {
+              _isDraggingGoulotteNotifier.value = false;
+              _genererIncrustation();
+            },
+            child: Container(width: len, height: 40, color: Colors.transparent),
+          ),
+        ),
+      ),
+      // 2. Noeud de redimensionnement de Départ
+      Positioned(
+        left: p1.dx - 25,
+        top: p1.dy - 25,
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onPanStart: (_) => _isDraggingGoulotteNotifier.value = true,
+          onPanUpdate: (details) {
+            Offset deltaOrig = details.delta / scale;
+            var g = _goulotteNotifier.value!;
+            Offset rawStart = g.start + deltaOrig;
+            
+            // Clamper pour ne pas sortir des limites de l'image
+            rawStart = _clampToImageBounds(rawStart);
+            
+            // On force l'alignement rectiligne parfait (horizontal ou vertical)
+            Offset snappedStart = _snapToOrthogonal(g.end, rawStart);
+            
+            // Re-clamp par sécurité au cas où le snap pousserait le point dehors
+            _goulotteNotifier.value = LigneGoulotte(_clampToImageBounds(snappedStart), g.end);
+          },
+          onPanEnd: (_) {
+            _isDraggingGoulotteNotifier.value = false;
+            _genererIncrustation();
+          },
+          onPanCancel: () {
+            _isDraggingGoulotteNotifier.value = false;
+            _genererIncrustation();
+          },
+          child: Container(width: 50, height: 50, color: Colors.transparent),
+        ),
+      ),
+      // 3. Noeud de redimensionnement de Fin
+      Positioned(
+        left: p2.dx - 25,
+        top: p2.dy - 25,
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onPanStart: (_) => _isDraggingGoulotteNotifier.value = true,
+          onPanUpdate: (details) {
+            Offset deltaOrig = details.delta / scale;
+            var g = _goulotteNotifier.value!;
+            Offset rawEnd = g.end + deltaOrig;
+            
+            // Clamper pour ne pas sortir des limites de l'image
+            rawEnd = _clampToImageBounds(rawEnd);
+            
+            // On force l'alignement rectiligne parfait (horizontal ou vertical)
+            Offset snappedEnd = _snapToOrthogonal(g.start, rawEnd);
+            
+            // Re-clamp par sécurité
+            _goulotteNotifier.value = LigneGoulotte(g.start, _clampToImageBounds(snappedEnd));
+          },
+          onPanEnd: (_) {
+            _isDraggingGoulotteNotifier.value = false;
+            _genererIncrustation();
+          },
+          onPanCancel: () {
+            _isDraggingGoulotteNotifier.value = false;
+            _genererIncrustation();
+          },
+          child: Container(width: 50, height: 50, color: Colors.transparent),
+        ),
+      ),
+    ];
+  }
+
   Widget _buildCalqueResultat(double scale, double offsetX, double offsetY, BoxConstraints constraints) {
     double ptHgXOrig = _pointsCibles![0]['x']! * (_imageWidth! / 1024.0);
     double ptHgYOrig = _pointsCibles![0]['y']! * (_imageHeight! / 1024.0);
@@ -448,9 +658,15 @@ class _EcranResultatState extends State<EcranResultat> {
 
     double climWPxOrig = (largeurMm / 50.0) * autoWPxOrig;
     double climHPxOrig = climWPxOrig * (hauteurMm / largeurMm);
+
     double climScreenW = climWPxOrig * scale;
     double climScreenH = climHPxOrig * scale;
+
     double angleRad = math.atan2(dy, dx);
+    
+    // Calcul de l'épaisseur pour le Painter
+    double ratioGoulotte = 0.10;
+    double largeurGoulotteOrig = climWPxOrig * ratioGoulotte;
 
     return Stack(
       children: [
@@ -460,30 +676,84 @@ class _EcranResultatState extends State<EcranResultat> {
               : Image.file(File(widget.photoPath), fit: BoxFit.contain),
         ),
 
-        if (_imageResultatBytes != null)
-          ValueListenableBuilder<bool>(
-            valueListenable: _isDraggingNotifier,
-            builder: (context, isDragging, _) {
-              if (isDragging) return const SizedBox.shrink(); 
-              return ValueListenableBuilder<double>(
-                valueListenable: _splitNotifier,
-                builder: (context, splitVal, _) {
-                  return Positioned.fill(
-                    child: ClipRect(
-                      clipper: _SplitClipper(splitVal),
-                      child: Image.memory(_imageResultatBytes!, fit: BoxFit.contain),
-                    ),
-                  );
-                }
-              );
-            }
-          ),
+        // L'image de la scène : s'adapte en direct à 60 FPS quand on manipule la goulotte
+        ValueListenableBuilder<bool>(
+          valueListenable: _isDraggingGoulotteNotifier,
+          builder: (context, isDraggingGoulotte, _) {
+            // Si on drag, on affiche l'image SANS goulotte cuite, pour ne voir que le Painter de Flutter
+            Uint8List? imageToDisplay = isDraggingGoulotte ? _imageResultatSansGoulotteBytes : _imageResultatBytes;
+            // Sécurité si le cache n'est pas encore prêt pendant le tout premier drag
+            if (imageToDisplay == null) return const SizedBox.shrink();
+
+            return ValueListenableBuilder<bool>(
+              valueListenable: _isDraggingNotifier,
+              builder: (context, isDraggingClim, _) {
+                if (isDraggingClim) return const SizedBox.shrink(); 
+                
+                return ValueListenableBuilder<double>(
+                  valueListenable: _splitNotifier,
+                  builder: (context, splitVal, _) {
+                    // FIX DISPARITION : Si on est en mode dessin goulotte, l'image reste affichée à 100% !
+                    double currentSplit = _isDrawGoulotteMode ? 1.0 : splitVal;
+                    return Positioned.fill(
+                      child: ClipRect(
+                        clipper: _SplitClipper(currentSplit),
+                        // gaplessPlayback évite le scintillement (flickering) lors du changement d'image
+                        child: Image.memory(imageToDisplay, fit: BoxFit.contain, gaplessPlayback: true), 
+                      ),
+                    );
+                  }
+                );
+              }
+            );
+          }
+        ),
+
+        // NOUVEAU : Le painter global de la goulotte
+        // Positionné ici, il s'affiche par dessus l'image vierge si OpenCV est masqué par le drag de la clim !
+        Positioned.fill(
+          child: IgnorePointer(
+            child: ValueListenableBuilder<LigneGoulotte?>(
+              valueListenable: _goulotteNotifier,
+              builder: (context, goulotte, _) {
+                return ValueListenableBuilder<bool>(
+                  valueListenable: _isDraggingNotifier, // Etat du drag clim
+                  builder: (context, isDraggingClim, _) {
+                    return ValueListenableBuilder<bool>(
+                      valueListenable: _isDraggingGoulotteNotifier, // Etat du drag goulotte
+                      builder: (context, isDraggingGoulotte, _) {
+                        
+                        // On affiche la ligne 2D temporaire si on drag la goulotte OU LA CLIM !
+                        bool showLine = isDraggingClim || isDraggingGoulotte;
+                        // On affiche les ronds bleus (nœuds) uniquement si l'outil pinceau est activé
+                        bool showNodes = _isDrawGoulotteMode;
+
+                        return CustomPaint(
+                          painter: _GoulottePainter(
+                            goulotte: goulotte,
+                            scale: scale,
+                            offsetX: offsetX,
+                            offsetY: offsetY,
+                            thicknessOrig: largeurGoulotteOrig,
+                            showLine: showLine,
+                            showNodes: showNodes,
+                          ),
+                        );
+                      }
+                    );
+                  }
+                );
+              }
+            )
+          )
+        ),
 
         if (_imageResultatBytes != null)
           ValueListenableBuilder<bool>(
             valueListenable: _isDraggingNotifier,
             builder: (context, isDragging, _) {
-              if (isDragging) return const SizedBox.shrink();
+              // On masque la barre de slider si l'utilisateur trace une goulotte ou drag
+              if (isDragging || _isDrawGoulotteMode) return const SizedBox.shrink();
               return ValueListenableBuilder<double>(
                 valueListenable: _splitNotifier,
                 builder: (context, splitVal, _) {
@@ -542,29 +812,41 @@ class _EcranResultatState extends State<EcranResultat> {
                     top: climScreenY,
                     width: climScreenW,
                     height: climScreenH,
-                    child: GestureDetector(
-                      behavior: HitTestBehavior.translucent,
-                      onPanStart: (_) => _isDraggingNotifier.value = true,
-                      onPanUpdate: (details) {
-                         _decalageNotifier.value = Offset(
-                           _decalageNotifier.value.dx + details.delta.dx / scale,
-                           _decalageNotifier.value.dy + details.delta.dy / scale
-                         );
-                      },
-                      onPanEnd: (_) {
-                         _isDraggingNotifier.value = false;
-                         _genererIncrustation(); 
-                      },
-                      onPanCancel: () {
-                         _isDraggingNotifier.value = false;
-                         _genererIncrustation(); 
-                      },
-                      child: Transform.rotate(
-                        angle: angleRad,
-                        alignment: Alignment.topLeft, 
-                        child: Opacity(
-                          opacity: isDragging ? 0.65 : 0.0, 
-                          child: Image.asset(_modeleSelectionne!.chemin, fit: BoxFit.fill),
+                    child: IgnorePointer(
+                      // Désactive le drag de la clim si on est en mode dessin de goulotte
+                      ignoring: _isDrawGoulotteMode,
+                      child: GestureDetector(
+                        behavior: HitTestBehavior.translucent,
+                        onPanStart: (_) => _isDraggingNotifier.value = true,
+                        onPanUpdate: (details) { 
+                           // CORRECTION DU BUG DE ROTATION POUR LA CLIM AUSSI (sécurité)
+                           double cosA = math.cos(angleRad);
+                           double sinA = math.sin(angleRad);
+                           double globalDx = details.delta.dx * cosA - details.delta.dy * sinA;
+                           double globalDy = details.delta.dx * sinA + details.delta.dy * cosA;
+
+                           _decalageNotifier.value = Offset(
+                             _decalageNotifier.value.dx + globalDx / scale,
+                             _decalageNotifier.value.dy + globalDy / scale
+                           );
+                        },
+                        onPanEnd: (_) { 
+                           _isDraggingNotifier.value = false;
+                           _imageResultatSansGoulotteBytes = null; // Invalide le cache car la clim a bougée !
+                           _genererIncrustation(); 
+                         },
+                        onPanCancel: () { 
+                           _isDraggingNotifier.value = false;
+                           _imageResultatSansGoulotteBytes = null;
+                           _genererIncrustation(); 
+                         },
+                        child: Transform.rotate(
+                          angle: angleRad,
+                          alignment: Alignment.topLeft, 
+                          child: Opacity(
+                            opacity: isDragging ? 0.65 : 0.0, 
+                            child: Image.asset(_modeleSelectionne!.chemin, fit: BoxFit.fill),
+                          ),
                         ),
                       ),
                     ),
@@ -574,11 +856,92 @@ class _EcranResultatState extends State<EcranResultat> {
             }
           ),
 
+        // Calque interactif invisible avec système Nodal pour la Goulotte
+        if (_isDrawGoulotteMode)
+          Positioned.fill(
+            child: ValueListenableBuilder<LigneGoulotte?>(
+              valueListenable: _goulotteNotifier,
+              builder: (context, goulotte, _) {
+                return Stack(
+                  children: [
+                    // La couche d'interaction (CORRECTION DU BUG DE DESSIN)
+                    if (goulotte == null)
+                      // A - Mode plein écran pour tracer la toute première goulotte
+                      Positioned.fill(
+                        child: GestureDetector(
+                          behavior: HitTestBehavior.opaque,
+                          onPanStart: (details) {
+                            // On garde la trace initiale sans provoquer la disparition de la zone tactile
+                            Offset touchOrig = (details.localPosition - Offset(offsetX, offsetY)) / scale;
+                            
+                            // Clamper le point de départ pour ne pas commencer en dehors
+                            _goulotteStartOrig = _clampToImageBounds(touchOrig);
+                            _goulotteCurrentEndOrigNotifier.value = _goulotteStartOrig;
+                            _isDraggingGoulotteNotifier.value = true;
+                          },
+                          onPanUpdate: (details) {
+                            if (_goulotteStartOrig != null) {
+                              Offset rawEnd = (details.localPosition - Offset(offsetX, offsetY)) / scale;
+                              
+                              // On clamp pour ne pas sortir de l'image
+                              rawEnd = _clampToImageBounds(rawEnd);
+                              
+                              // Force le tracé à être parfaitement droit
+                              Offset snappedEnd = _snapToOrthogonal(_goulotteStartOrig!, rawEnd);
+                              
+                              // Re-clamp au cas où le snap aurait poussé la ligne en dehors
+                              _goulotteCurrentEndOrigNotifier.value = _clampToImageBounds(snappedEnd);
+                            }
+                          },
+                          onPanEnd: (_) {
+                            if (_goulotteStartOrig != null && _goulotteCurrentEndOrigNotifier.value != null) {
+                              _isDraggingGoulotteNotifier.value = false;
+                              // Validation finale de la goulotte, ce qui active les nœuds de Drag
+                              _goulotteNotifier.value = LigneGoulotte(_goulotteStartOrig!, _goulotteCurrentEndOrigNotifier.value!);
+                              _goulotteStartOrig = null;
+                              _goulotteCurrentEndOrigNotifier.value = null;
+                              _genererIncrustation();
+                            }
+                          },
+                          onPanCancel: () {
+                            _isDraggingGoulotteNotifier.value = false;
+                            _goulotteStartOrig = null;
+                            _goulotteCurrentEndOrigNotifier.value = null;
+                          },
+                          // Le painter temporaire pour afficher le trait PENDANT sa création
+                          child: ValueListenableBuilder<Offset?>(
+                            valueListenable: _goulotteCurrentEndOrigNotifier,
+                            builder: (context, currentEnd, _) {
+                              if (_goulotteStartOrig == null || currentEnd == null) return const SizedBox.shrink();
+                              return CustomPaint(
+                                painter: _GoulottePainter(
+                                  goulotte: LigneGoulotte(_goulotteStartOrig!, currentEnd),
+                                  scale: scale,
+                                  offsetX: offsetX,
+                                  offsetY: offsetY,
+                                  thicknessOrig: largeurGoulotteOrig,
+                                  showLine: true, 
+                                  showNodes: true, // Affiche les nœuds pendant la création
+                                ),
+                              );
+                            },
+                          ),
+                        ),
+                      )
+                    else
+                      // B - Mode interactif nodal (laisse 90% de l'écran libre pour le zoom !)
+                      ..._buildGoulotteDraggers(goulotte, scale, offsetX, offsetY),
+                  ],
+                );
+              }
+            ),
+          ),
+
         if (_isProcessing)
           ValueListenableBuilder<bool>(
             valueListenable: _isDraggingNotifier,
             builder: (context, isDragging, _) {
-               if (isDragging) return const SizedBox.shrink();
+               if (isDragging) return const SizedBox.shrink(); 
                return Positioned.fill(
                 child: Container(
                   color: Colors.black54,
@@ -666,6 +1029,7 @@ class _EcranResultatState extends State<EcranResultat> {
                           if (_isProcessing) return;
                           setState(() {
                             _modeleSelectionne = clim;
+                            _imageResultatSansGoulotteBytes = null; // On force le rafraichissement total si on change de modèle
                             _genererIncrustation();
                           });
                         },
@@ -702,7 +1066,6 @@ class _EcranResultatState extends State<EcranResultat> {
   // =========================================================================
   // === BUILD PRINCIPAL ===
   // =========================================================================
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -721,69 +1084,155 @@ class _EcranResultatState extends State<EcranResultat> {
                   Positioned.fill(
                     child: ClipRRect(
                       borderRadius: BorderRadius.circular(15),
-                      child: InteractiveViewer(
-                          transformationController: _transformationController, 
-                          panEnabled: true,
-                          scaleEnabled: true,
-                          minScale: 1.0,
-                          maxScale: 8.0,
-                          child: LayoutBuilder(
-                            builder: (context, constraints) {
-                              if (_imageWidth == null || _imageHeight == null) {
-                                 return _isProcessing 
-                                    ? Center(
-                                        child: Column(
-                                          mainAxisSize: MainAxisSize.min,
-                                          children: [
-                                            const CircularProgressIndicator(),
-                                            const SizedBox(height: 16),
-                                            Text(_loadingMessage, style: const TextStyle(fontWeight: FontWeight.bold)),
-                                          ],
-                                        ),
-                                      )
-                                    : Image.file(File(widget.photoPath), fit: BoxFit.contain);
-                              }
+                      // Écoute l'état de la goulotte pour réactiver intelligemment le Pan/Zoom
+                      child: ValueListenableBuilder<LigneGoulotte?>(
+                        valueListenable: _goulotteNotifier,
+                        builder: (context, goulotte, _) {
+                          // Si le mode Goulotte n'est pas actif, OU si une goulotte existe déjà (et utilise le drag nodale) : on autorise le zoom !
+                          bool isPanZoomEnabled = !_isDrawGoulotteMode || goulotte != null;
+                          
+                          return InteractiveViewer(
+                            transformationController: _transformationController, 
+                            panEnabled: isPanZoomEnabled,
+                            scaleEnabled: isPanZoomEnabled,
+                            minScale: 1.0,
+                            maxScale: 8.0,
+                            child: LayoutBuilder(
+                              builder: (context, constraints) {
+                                if (_imageWidth == null || _imageHeight == null) {
+                                   return _isProcessing
+                                       ? Center(
+                                          child: Column(
+                                            mainAxisSize: MainAxisSize.min,
+                                            children: [
+                                              const CircularProgressIndicator(),
+                                              const SizedBox(height: 16),
+                                              Text(_loadingMessage, style: const TextStyle(fontWeight: FontWeight.bold)),
+                                            ],
+                                          ),
+                                        )
+                                      : Image.file(File(widget.photoPath), fit: BoxFit.contain);
+                                }
 
-                              if (_pointsCibles == null && !_isManualPlacementMode) {
-                                 return Image.file(File(widget.photoPath), fit: BoxFit.contain);
-                              }
+                                if (_pointsCibles == null && !_isManualPlacementMode) {
+                                   return Image.file(File(widget.photoPath), fit: BoxFit.contain);
+                                }
 
-                              double scale = math.min(constraints.maxWidth / _imageWidth!, constraints.maxHeight / _imageHeight!);
-                              double offsetX = (constraints.maxWidth - (_imageWidth! * scale)) / 2;
-                              double offsetY = (constraints.maxHeight - (_imageHeight! * scale)) / 2;
+                                double scale = math.min(constraints.maxWidth / _imageWidth!, constraints.maxHeight / _imageHeight!);
+                                double offsetX = (constraints.maxWidth - (_imageWidth! * scale)) / 2;
+                                double offsetY = (constraints.maxHeight - (_imageHeight! * scale)) / 2;
 
-                              if (_isManualPlacementMode) {
-                                return _buildCalquePlacementManuel(scale, offsetX, offsetY);
-                              } else {
-                                return _buildCalqueResultat(scale, offsetX, offsetY, constraints);
-                              }
-                            },
-                          ),
-                        ),
+                                if (_isManualPlacementMode) {
+                                  return _buildCalquePlacementManuel(scale, offsetX, offsetY);
+                                } else {
+                                  return _buildCalqueResultat(scale, offsetX, offsetY, constraints);
+                                }
+                              },
+                            ),
+                          );
+                        }
+                      ),
                     ),
                   ),
                   
+                  // Colonne de boutons d'action au dessus de l'image
                   if (_modeleSelectionne != null && !_isManualPlacementMode)
-                    ValueListenableBuilder<Offset>(
-                      valueListenable: _decalageNotifier,
-                      builder: (context, decalage, _) {
-                        if (decalage == Offset.zero) return const SizedBox.shrink();
-                        return Positioned(
-                          top: 10,
-                          right: 10,
-                          child: Material(
-                            color: Colors.white.withValues(alpha: 0.9),
-                            shape: const CircleBorder(),
-                            elevation: 4,
-                            child: IconButton(
-                              icon: const Icon(Icons.restore),
-                              color: Colors.teal,
-                              tooltip: 'Réinitialiser la position',
-                              onPressed: _isProcessing ? null : _reinitialiserPosition,
+                    Positioned(
+                      top: 10,
+                      right: 10,
+                      child: Column(
+                        children: [
+                          ValueListenableBuilder<Offset>(
+                            valueListenable: _decalageNotifier,
+                            builder: (context, decalage, _) {
+                              if (decalage == Offset.zero) return const SizedBox.shrink();
+                              return Padding(
+                                padding: const EdgeInsets.only(bottom: 8.0),
+                                child: Material(
+                                  color: Colors.white.withValues(alpha: 0.9),
+                                  shape: const CircleBorder(),
+                                  elevation: 4,
+                                  child: IconButton(
+                                    icon: const Icon(Icons.restore),
+                                    color: Colors.teal,
+                                    tooltip: 'Réinitialiser la position',
+                                    onPressed: _isProcessing ? null : _reinitialiserPosition,
+                                  ),
+                                ),
+                              );
+                            }
+                          ),
+                          
+                          // Bouton d'activation du Mode Goulotte
+                          Padding(
+                            padding: const EdgeInsets.only(bottom: 8.0),
+                            child: Material(
+                              color: _isDrawGoulotteMode ? Colors.teal : Colors.white.withValues(alpha: 0.9),
+                              shape: const CircleBorder(),
+                              elevation: 4,
+                              child: IconButton(
+                                icon: Icon(Icons.format_paint, color: _isDrawGoulotteMode ? Colors.white : Colors.teal),
+                                tooltip: 'Tracer une goulotte',
+                                onPressed: _isProcessing ? null : () {
+                                  setState(() {
+                                    _isDrawGoulotteMode = !_isDrawGoulotteMode;
+                                    _isDraggingNotifier.value = false; 
+                                  });
+                                },
+                              ),
                             ),
                           ),
-                        );
-                      }
+                          
+                          // Bouton pour ENLEVER la goulotte (Unique goulotte)
+                          if (_isDrawGoulotteMode) // NOUVEAU: Apparaît uniquement en mode goulotte
+                            ValueListenableBuilder<LigneGoulotte?>(
+                              valueListenable: _goulotteNotifier,
+                              builder: (context, goulotteActuelle, _) {
+                                if (goulotteActuelle == null) return const SizedBox.shrink();
+                                return Padding(
+                                  padding: const EdgeInsets.only(bottom: 8.0),
+                                  child: Material(
+                                    color: Colors.white.withValues(alpha: 0.9),
+                                    shape: const CircleBorder(),
+                                    elevation: 4,
+                                    child: IconButton(
+                                      icon: const Icon(Icons.delete_outline),
+                                      color: Colors.red,
+                                      tooltip: 'Supprimer la goulotte',
+                                      onPressed: _isProcessing ? null : () {
+                                        // Sécurité pour éviter le missclick
+                                        showDialog(
+                                          context: context,
+                                          builder: (BuildContext context) {
+                                            return AlertDialog(
+                                              title: const Text("Supprimer la goulotte"),
+                                              content: const Text("Êtes-vous sûr de vouloir effacer cette goulotte ?"),
+                                              actions: [
+                                                TextButton(
+                                                  onPressed: () => Navigator.of(context).pop(),
+                                                  child: const Text("Annuler", style: TextStyle(color: Colors.grey)),
+                                                ),
+                                                ElevatedButton(
+                                                  style: ElevatedButton.styleFrom(backgroundColor: Colors.red, foregroundColor: Colors.white),
+                                                  onPressed: () {
+                                                    Navigator.of(context).pop();
+                                                    _goulotteNotifier.value = null; // Vide la goulotte unique
+                                                    _genererIncrustation(); // Réaffiche la photo sans goulotte
+                                                  },
+                                                  child: const Text("Supprimer"),
+                                                ),
+                                              ],
+                                            );
+                                          },
+                                        );
+                                      },
+                                    ),
+                                  ),
+                                );
+                              }
+                            ),
+                        ],
+                      ),
                     ),
                 ],
               ),
@@ -791,6 +1240,7 @@ class _EcranResultatState extends State<EcranResultat> {
           ),
 
           if (_pointsCibles != null && !_isManualPlacementMode) _buildCatalogue(),
+
           const SizedBox(height: 80),
         ],
       ),
@@ -821,6 +1271,60 @@ class _EcranResultatState extends State<EcranResultat> {
 // === CLASSES UTILITAIRES (DESSIN ET DÉCOUPAGE) ===
 // =========================================================================
 
+// Le painter visuel pour l'édition et les points nodaux de la goulotte
+class _GoulottePainter extends CustomPainter {
+  final LigneGoulotte? goulotte;
+  final double scale;
+  final double offsetX;
+  final double offsetY;
+  final double thicknessOrig; 
+  final bool showLine; // Gère l'affichage du corps de la goulotte
+  final bool showNodes; // Gère l'affichage des nœuds bleus (ronds)
+
+  _GoulottePainter({
+    required this.goulotte, 
+    required this.scale, 
+    required this.offsetX, 
+    required this.offsetY, 
+    required this.thicknessOrig, 
+    required this.showLine,
+    required this.showNodes,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (goulotte == null) return;
+
+    final p1 = Offset(goulotte!.start.dx * scale + offsetX, goulotte!.start.dy * scale + offsetY);
+    final p2 = Offset(goulotte!.end.dx * scale + offsetX, goulotte!.end.dy * scale + offsetY);
+    
+    // On dessine le trait vectoriel si demandé (quand l'image cuite d'OpenCV est masquée par un déplacement)
+    if (showLine) {
+      final paintLine = Paint()
+        ..color = Colors.white70
+        ..strokeWidth = thicknessOrig * scale 
+        ..strokeCap = StrokeCap.butt; // Bout parfaitement plat
+        
+      canvas.drawLine(p1, p2, paintLine);
+    }
+
+    // Indicateurs nodaux (les ronds) pour montrer à l'utilisateur où grab/tirer la ligne
+    if (showNodes) {
+      final paintHandle = Paint()..color = Colors.blueAccent;
+      final paintHandleBorder = Paint()..color = Colors.white..style = PaintingStyle.stroke..strokeWidth = 1.5; // Bordure plus fine
+      
+      // Ronds plus petits (7.0 au lieu de 15.0) pour ne pas cacher les extrémités
+      canvas.drawCircle(p1, 7.0, paintHandle);
+      canvas.drawCircle(p1, 7.0, paintHandleBorder);
+      canvas.drawCircle(p2, 7.0, paintHandle);
+      canvas.drawCircle(p2, 7.0, paintHandleBorder);
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _GoulottePainter oldDelegate) => true;
+}
+
 class _SplitClipper extends CustomClipper<Rect> {
   final double percentage;
   _SplitClipper(this.percentage);
@@ -846,14 +1350,14 @@ class _BoundingBoxPainter extends CustomPainter {
       ..color = Colors.blueAccent
       ..strokeWidth = 2.0
       ..style = PaintingStyle.stroke;
-    
+      
     final path = Path()
       ..moveTo(points[0].dx, points[0].dy)
       ..lineTo(points[1].dx, points[1].dy)
       ..lineTo(points[2].dx, points[2].dy)
       ..lineTo(points[3].dx, points[3].dy)
       ..close();
-    
+      
     canvas.drawPath(path, paint);
 
     final fillPaint = Paint()
