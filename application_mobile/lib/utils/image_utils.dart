@@ -63,25 +63,32 @@ Map<String, dynamic>? prepareImageMatrixForIA(Map<String, dynamic> params) {
   
   // Convertit l'image selon le format attendu par le modèle : NHWC (Haut, Largeur, Canaux) ou NCHW (Canaux, Haut, Largeur).
   if (isNHWC) {
-    inputMatrix = List.generate(1, (i) => List.generate(1024, (j) => List.generate(1024, (k) => List.generate(3, (l) => 0.0))));
-    for (int y = 0; y < 1024; y++) {
-      for (int x = 0; x < 1024; x++) {
-        final pixel = resizedImage.getPixel(x, y);
-        // Normalise les valeurs RGB entre 0.0 et 1.0.
-        inputMatrix[0][y][x][0] = pixel.r / 255.0; 
-        inputMatrix[0][y][x][1] = pixel.g / 255.0; 
-        inputMatrix[0][y][x][2] = pixel.b / 255.0; 
+    inputMatrix = List.generate(1, (i) => List.generate(1024, (j) => List.generate(1024, (k) => Float32List(3))));
+    int x = 0;
+    int y = 0;
+    // Itération linéaire ultra-rapide sur la mémoire de l'image (évite de créer un million d'objets)
+    for (final pixel in resizedImage) {
+      inputMatrix[0][y][x][0] = pixel.r / 255.0; 
+      inputMatrix[0][y][x][1] = pixel.g / 255.0; 
+      inputMatrix[0][y][x][2] = pixel.b / 255.0; 
+      x++;
+      if (x >= 1024) {
+        x = 0;
+        y++;
       }
     }
   } else {
-    inputMatrix = List.generate(1, (i) => List.generate(3, (j) => List.generate(1024, (k) => List.generate(1024, (l) => 0.0))));
-    for (int y = 0; y < 1024; y++) {
-      for (int x = 0; x < 1024; x++) {
-        final pixel = resizedImage.getPixel(x, y);
-        // Normalise les valeurs RGB entre 0.0 et 1.0.
-        inputMatrix[0][0][y][x] = pixel.r / 255.0; 
-        inputMatrix[0][1][y][x] = pixel.g / 255.0; 
-        inputMatrix[0][2][y][x] = pixel.b / 255.0; 
+    inputMatrix = List.generate(1, (i) => List.generate(3, (j) => List.generate(1024, (k) => Float32List(1024))));
+    int x = 0;
+    int y = 0;
+    for (final pixel in resizedImage) {
+      inputMatrix[0][0][y][x] = pixel.r / 255.0; 
+      inputMatrix[0][1][y][x] = pixel.g / 255.0; 
+      inputMatrix[0][2][y][x] = pixel.b / 255.0; 
+      x++;
+      if (x >= 1024) {
+        x = 0;
+        y++;
       }
     }
   }

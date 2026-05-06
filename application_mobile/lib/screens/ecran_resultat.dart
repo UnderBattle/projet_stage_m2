@@ -41,8 +41,10 @@ class _EcranResultatState extends State<EcranResultat> {
   bool _isProcessing = true;
   String _loadingMessage = "Analyse en cours...";
   
-  Uint8List? _imageResultatBytes; // L'image finale (avec goulotte cuite par OpenCV)
-  Uint8List? _imageResultatSansGoulotteBytes; // Cache : L'image avec Clim mais SANS goulotte
+  Uint8List? _imageResultatBytes; // L'image finale (avec goulotte + clim)
+  // NOUVEAU CACHE OPTIMISÉ : On mémorise le Mur + Goulotte pour ne pas recalculer la goulotte si seule la clim bouge !
+  // CACHE OPTIMISÉ : On mémorise le Mur + Clim pour ne pas recalculer la clim si seule la goulotte bouge.
+  Uint8List? _imageFondAvecClimBytes; 
   Uint8List? _imageFondPropreBytes;
   
   int? _imageWidth;
@@ -68,6 +70,9 @@ class _EcranResultatState extends State<EcranResultat> {
   // Variables temporaires pour ne pas casser le drag du tout premier tracé
   Offset? _goulotteStartOrig;
   final ValueNotifier<Offset?> _goulotteCurrentEndOrigNotifier = ValueNotifier(null);
+
+  // Compteur de doigts sur l'écran pour empêcher les erreurs lors du zoom
+  int _activePointers = 0;
 
   @override
   void initState() {
@@ -102,10 +107,8 @@ class _EcranResultatState extends State<EcranResultat> {
     double dy = (target.dy - reference.dy).abs();
     
     if (dx > dy) {
-      // Mouvement majoritairement horizontal -> On force l'alignement sur l'axe Y de référence
       return Offset(target.dx, reference.dy);
     } else {
-      // Mouvement majoritairement vertical -> On force l'alignement sur l'axe X de référence
       return Offset(reference.dx, target.dy);
     }
   }
@@ -138,7 +141,7 @@ class _EcranResultatState extends State<EcranResultat> {
       var outputShape = yoloModel.getOutputTensor(0).shape;
       var outputMatrix = List.generate(outputShape[0], (i) => 
         List.generate(outputShape[1], (j) => 
-          List.generate(outputShape[2], (k) => 0.0)
+          List<double>.filled(outputShape[2], 0.0)
         )
       );
 
@@ -204,6 +207,7 @@ class _EcranResultatState extends State<EcranResultat> {
             'pointsIA': _pointsCibles!,
             'lamaBytes': IAService().lamaBytes,
           });
+          _imageFondAvecClimBytes = null; // Sécurité Cache
         }
         
         setState(() {
@@ -284,6 +288,7 @@ class _EcranResultatState extends State<EcranResultat> {
         'pointsIA': _pointsCibles!,
         'lamaBytes': IAService().lamaBytes,
       });
+      _imageFondAvecClimBytes = null; // On nettoie le cache car la base a changé
     } catch (e) {
       print("Erreur inpainting manuel : $e");
     }
@@ -293,12 +298,13 @@ class _EcranResultatState extends State<EcranResultat> {
     });
   }
 
-  Future<void> _genererIncrustation() async {
+  // NOUVELLE ARCHITECTURE OPTIMISÉE
+  Future<void> _genererIncrustation({bool recomputeClim = false, bool recomputeGoulotte = false}) async {
     if (_pointsCibles == null || _modeleSelectionne == null || _imageFondPropreBytes == null) return;
     
     setState(() {
       _isProcessing = true;
-      _loadingMessage = "Calcul des ombres et lumières...";
+      _loadingMessage = "Calcul du rendu...";
     });
 
     try {
@@ -306,17 +312,21 @@ class _EcranResultatState extends State<EcranResultat> {
       final ByteData data = await DefaultAssetBundle.of(context).load(climPath);
       Uint8List climBytes = data.buffer.asUint8List();
       
-      // On récupère toutes les dimensions directement depuis l'objet Equipement
       double profondeur = _modeleSelectionne!.profondeur;
       double hauteur = _modeleSelectionne!.hauteur;
       double largeur = _modeleSelectionne!.largeur;
 
-      // MISE EN CACHE OPTIMISÉE : Si on ne fait que bouger la goulotte, on ne recalcule PAS la clim !
-      Uint8List? resultImage = _imageResultatSansGoulotteBytes;
-      
-      if (resultImage == null) {
-         resultImage = await compute(TraitementImage.incrusterClimatisationIsolate, {
-          'fondPropreBytes': _imageFondPropreBytes!,
+      // Si on déplace la clim (ou change de modèle), on doit invalider son cache.
+      if (recomputeClim) {
+        _imageFondAvecClimBytes = null;
+      }
+
+      // 1. GÉNÉRATION DE LA CLIMATISATION SUR LE MUR (Si elle n'est pas déjà en cache)
+      if (_imageFondAvecClimBytes == null) {
+        setState(() => _loadingMessage = "Calcul des ombres de la clim...");
+        
+        _imageFondAvecClimBytes = await compute(TraitementImage.incrusterClimatisationIsolate, {
+          'fondPropreBytes': _imageFondPropreBytes!, // Le fond est le mur propre !
           'climBytes': climBytes,
           'pointsIA': _pointsCibles!,
           'decalageX': _decalageNotifier.value.dx,
@@ -326,43 +336,42 @@ class _EcranResultatState extends State<EcranResultat> {
           'hauteurMm': hauteur, 
           'largeurMm': largeur, 
         });
-        _imageResultatSansGoulotteBytes = resultImage; // Sauvegarde dans le cache
       }
 
-      // Calcul dynamique de la largeur de la goulotte
-      // On calcule la largeur de l'image projetée en coordonnées d'origine (12 MP)
-      double ptHgXOrig = _pointsCibles![0]['x']! * (_imageWidth! / 1024.0);
-      double ptHgYOrig = _pointsCibles![0]['y']! * (_imageHeight! / 1024.0);
-      double ptHdXOrig = _pointsCibles![1]['x']! * (_imageWidth! / 1024.0);
-      double ptHdYOrig = _pointsCibles![1]['y']! * (_imageHeight! / 1024.0);
-      double dx = ptHdXOrig - ptHgXOrig;
-      double dy = ptHdYOrig - ptHgYOrig;
-      double autoWPxOrig = math.sqrt(dx * dx + dy * dy);
-      double climWPxOrig = (largeur / 50.0) * autoWPxOrig;
-      
-      // Variable facilement modifiable pour régler la taille des goulottes
-      double ratioGoulotte = 0.10; // La goulotte fera 1/10ème de la largeur de la clim
-      double largeurGoulotteOrig = climWPxOrig * ratioGoulotte;
+      // La base de travail pour la goulotte est maintenant le mur avec la clim.
+      Uint8List basePourGoulotte = _imageFondAvecClimBytes ?? _imageFondPropreBytes!;
 
-      // Application de la goulotte (si elle existe) sur l'image de base
-      if (resultImage != null && _goulotteNotifier.value != null) {
+      // 2. GÉNÉRATION DE LA GOULOTTE PAR DESSUS TOUT (si elle existe)
+      Uint8List? finalImage;
+      if (_goulotteNotifier.value != null) {
         setState(() => _loadingMessage = "Incrustation de la goulotte...");
+
+        double ptHgXOrig = _pointsCibles![0]['x']! * (_imageWidth! / 1024.0);
+        double ptHgYOrig = _pointsCibles![0]['y']! * (_imageHeight! / 1024.0);
+        double ptHdXOrig = _pointsCibles![1]['x']! * (_imageWidth! / 1024.0);
+        double ptHdYOrig = _pointsCibles![1]['y']! * (_imageHeight! / 1024.0);
+        double dx = ptHdXOrig - ptHgXOrig;
+        double dy = ptHdYOrig - ptHgYOrig;
+        double autoWPxOrig = math.sqrt(dx * dx + dy * dy);
+        double climWPxOrig = (largeur / 50.0) * autoWPxOrig;
+        double ratioGoulotte = 0.10; 
+        double largeurGoulotteOrig = climWPxOrig * ratioGoulotte;
         
-        final newResult = await compute(TraitementImage.incrusterGoulotteIsolate, {
-          'imageAvecClimBytes': resultImage, // FIX : Suppression du '!' redondant grâce au Sound Null Safety
+        finalImage = await compute(TraitementImage.incrusterGoulotteIsolate, {
+          'imageAvecClimBytes': basePourGoulotte,
           'ptDepartX': _goulotteNotifier.value!.start.dx,
           'ptDepartY': _goulotteNotifier.value!.start.dy,
           'ptArriveeX': _goulotteNotifier.value!.end.dx,
           'ptArriveeY': _goulotteNotifier.value!.end.dy,
           'largeurPx': largeurGoulotteOrig, 
         });
-        
-        if (newResult != null) resultImage = newResult;
+      } else {
+        finalImage = basePourGoulotte;
       }
 
-      if (resultImage != null) {
+      if (finalImage != null) {
         setState(() {
-          _imageResultatBytes = resultImage;
+          _imageResultatBytes = finalImage;
           _splitNotifier.value = 1.0;
         });
       }
@@ -377,8 +386,8 @@ class _EcranResultatState extends State<EcranResultat> {
     if (_isProcessing) return;
     if (_decalageNotifier.value == Offset.zero) return;
     _decalageNotifier.value = Offset.zero;
-    _imageResultatSansGoulotteBytes = null; // Invalide le cache car la clim a bougée
-    _genererIncrustation();
+    // On recalcule la clim (car sa position change) et la goulotte par dessus.
+    _genererIncrustation(recomputeClim: true, recomputeGoulotte: true); 
   }
 
   Future<void> _sauvegarderImage() async {
@@ -439,6 +448,9 @@ class _EcranResultatState extends State<EcranResultat> {
           child: GestureDetector(
             behavior: HitTestBehavior.opaque,
             onPanUpdate: (details) {
+              // Sécurité : on ignore le déplacement si plusieurs doigts sont détectés
+              if (_activePointers > 1) return;
+              
               setState(() {
                 double dxOrig = details.delta.dx / scale;
                 double dyOrig = details.delta.dy / scale;
@@ -476,6 +488,9 @@ class _EcranResultatState extends State<EcranResultat> {
             child: GestureDetector(
               behavior: HitTestBehavior.opaque, 
               onPanUpdate: (details) {
+                // Sécurité multi-touch
+                if (_activePointers > 1) return;
+                
                 setState(() {
                   double dxOrig = details.delta.dx / scale;
                   double dyOrig = details.delta.dy / scale;
@@ -525,11 +540,13 @@ class _EcranResultatState extends State<EcranResultat> {
           alignment: Alignment.centerLeft,
           child: GestureDetector(
             behavior: HitTestBehavior.opaque,
-            onPanStart: (_) => _isDraggingGoulotteNotifier.value = true,
+            onPanStart: (_) {
+              if (_activePointers > 1) return;
+              _isDraggingGoulotteNotifier.value = true;
+            },
             onPanUpdate: (details) {
-              // CORRECTION DU BUG DE ROTATION : 
-              // Transform.rotate altère le repère local du GestureDetector.
-              // On ré-oriente le "delta" pour retrouver les vraies coordonnées globales de l'écran.
+              if (_activePointers > 1 || !_isDraggingGoulotteNotifier.value) return;
+              
               double cosA = math.cos(angle);
               double sinA = math.sin(angle);
               double globalDx = details.delta.dx * cosA - details.delta.dy * sinA;
@@ -560,12 +577,15 @@ class _EcranResultatState extends State<EcranResultat> {
               _goulotteNotifier.value = LigneGoulotte(newStart, newEnd);
             },
             onPanEnd: (_) {
+              if (!_isDraggingGoulotteNotifier.value) return;
               _isDraggingGoulotteNotifier.value = false;
-              _genererIncrustation();
+              // On demande à OpenCV de recalculer la Goulotte !
+              _genererIncrustation(recomputeGoulotte: true);
             },
             onPanCancel: () {
+              if (!_isDraggingGoulotteNotifier.value) return;
               _isDraggingGoulotteNotifier.value = false;
-              _genererIncrustation();
+              _genererIncrustation(recomputeGoulotte: true);
             },
             child: Container(width: len, height: 40, color: Colors.transparent),
           ),
@@ -577,28 +597,29 @@ class _EcranResultatState extends State<EcranResultat> {
         top: p1.dy - 25,
         child: GestureDetector(
           behavior: HitTestBehavior.opaque,
-          onPanStart: (_) => _isDraggingGoulotteNotifier.value = true,
+          onPanStart: (_) {
+            if (_activePointers > 1) return;
+            _isDraggingGoulotteNotifier.value = true;
+          },
           onPanUpdate: (details) {
+            if (_activePointers > 1 || !_isDraggingGoulotteNotifier.value) return;
             Offset deltaOrig = details.delta / scale;
             var g = _goulotteNotifier.value!;
             Offset rawStart = g.start + deltaOrig;
             
-            // Clamper pour ne pas sortir des limites de l'image
             rawStart = _clampToImageBounds(rawStart);
-            
-            // On force l'alignement rectiligne parfait (horizontal ou vertical)
             Offset snappedStart = _snapToOrthogonal(g.end, rawStart);
-            
-            // Re-clamp par sécurité au cas où le snap pousserait le point dehors
             _goulotteNotifier.value = LigneGoulotte(_clampToImageBounds(snappedStart), g.end);
           },
           onPanEnd: (_) {
+            if (!_isDraggingGoulotteNotifier.value) return;
             _isDraggingGoulotteNotifier.value = false;
-            _genererIncrustation();
+            _genererIncrustation(recomputeGoulotte: true);
           },
           onPanCancel: () {
+            if (!_isDraggingGoulotteNotifier.value) return;
             _isDraggingGoulotteNotifier.value = false;
-            _genererIncrustation();
+            _genererIncrustation(recomputeGoulotte: true);
           },
           child: Container(width: 50, height: 50, color: Colors.transparent),
         ),
@@ -609,28 +630,29 @@ class _EcranResultatState extends State<EcranResultat> {
         top: p2.dy - 25,
         child: GestureDetector(
           behavior: HitTestBehavior.opaque,
-          onPanStart: (_) => _isDraggingGoulotteNotifier.value = true,
+          onPanStart: (_) {
+            if (_activePointers > 1) return;
+            _isDraggingGoulotteNotifier.value = true;
+          },
           onPanUpdate: (details) {
+            if (_activePointers > 1 || !_isDraggingGoulotteNotifier.value) return;
             Offset deltaOrig = details.delta / scale;
             var g = _goulotteNotifier.value!;
             Offset rawEnd = g.end + deltaOrig;
             
-            // Clamper pour ne pas sortir des limites de l'image
             rawEnd = _clampToImageBounds(rawEnd);
-            
-            // On force l'alignement rectiligne parfait (horizontal ou vertical)
             Offset snappedEnd = _snapToOrthogonal(g.start, rawEnd);
-            
-            // Re-clamp par sécurité
             _goulotteNotifier.value = LigneGoulotte(g.start, _clampToImageBounds(snappedEnd));
           },
           onPanEnd: (_) {
+            if (!_isDraggingGoulotteNotifier.value) return;
             _isDraggingGoulotteNotifier.value = false;
-            _genererIncrustation();
+            _genererIncrustation(recomputeGoulotte: true);
           },
           onPanCancel: () {
+            if (!_isDraggingGoulotteNotifier.value) return;
             _isDraggingGoulotteNotifier.value = false;
-            _genererIncrustation();
+            _genererIncrustation(recomputeGoulotte: true);
           },
           child: Container(width: 50, height: 50, color: Colors.transparent),
         ),
@@ -670,76 +692,84 @@ class _EcranResultatState extends State<EcranResultat> {
 
     return Stack(
       children: [
+        // 1. Couche de Fond : Mur Propre OU Mur avec OpenCV Goulotte
         Positioned.fill(
-          child: _imageFondPropreBytes != null
-              ? Image.memory(_imageFondPropreBytes!, fit: BoxFit.contain)
-              : Image.file(File(widget.photoPath), fit: BoxFit.contain),
-        ),
-
-        // L'image de la scène : s'adapte en direct à 60 FPS quand on manipule la goulotte
-        ValueListenableBuilder<bool>(
-          valueListenable: _isDraggingGoulotteNotifier,
-          builder: (context, isDraggingGoulotte, _) {
-            // Si on drag, on affiche l'image SANS goulotte cuite, pour ne voir que le Painter de Flutter
-            Uint8List? imageToDisplay = isDraggingGoulotte ? _imageResultatSansGoulotteBytes : _imageResultatBytes;
-            // Sécurité si le cache n'est pas encore prêt pendant le tout premier drag
-            if (imageToDisplay == null) return const SizedBox.shrink();
-
-            return ValueListenableBuilder<bool>(
-              valueListenable: _isDraggingNotifier,
-              builder: (context, isDraggingClim, _) {
-                if (isDraggingClim) return const SizedBox.shrink(); 
-                
-                return ValueListenableBuilder<double>(
-                  valueListenable: _splitNotifier,
-                  builder: (context, splitVal, _) {
-                    // FIX DISPARITION : Si on est en mode dessin goulotte, l'image reste affichée à 100% !
-                    double currentSplit = _isDrawGoulotteMode ? 1.0 : splitVal;
-                    return Positioned.fill(
-                      child: ClipRect(
-                        clipper: _SplitClipper(currentSplit),
-                        // gaplessPlayback évite le scintillement (flickering) lors du changement d'image
-                        child: Image.memory(imageToDisplay, fit: BoxFit.contain, gaplessPlayback: true), 
-                      ),
-                    );
+          child: ValueListenableBuilder<bool>( // Écoute le drag de la clim
+            valueListenable: _isDraggingNotifier,
+            builder: (context, isDraggingClim, _) {
+              return ValueListenableBuilder<bool>( // Écoute le drag de la goulotte
+                valueListenable: _isDraggingGoulotteNotifier,
+                builder: (context, isDraggingGoulotte, _) {
+                  Uint8List? imgToShow;
+                  if (isDraggingClim) {
+                    // Quand on déplace la clim, on affiche le mur propre en fond.
+                    imgToShow = _imageFondPropreBytes;
+                  } else {
+                    // Sinon (déplacement goulotte ou repos), le fond est le mur avec la clim.
+                    imgToShow = _imageFondAvecClimBytes ?? _imageFondPropreBytes;
                   }
-                );
-              }
-            );
-          }
+                  if (imgToShow == null) {
+                    return Image.file(File(widget.photoPath), fit: BoxFit.contain);
+                  }
+                  return Image.memory(imgToShow, fit: BoxFit.contain, gaplessPlayback: true);
+                }
+              );
+            }
+          ),
         ),
 
-        // NOUVEAU : Le painter global de la goulotte
-        // Positionné ici, il s'affiche par dessus l'image vierge si OpenCV est masqué par le drag de la clim !
+        // 2. Couche OpenCV Résultat Complet (Cachée pendant TOUT glissement)
+        if (_imageResultatBytes != null)
+          ValueListenableBuilder<bool>(
+            valueListenable: _isDraggingNotifier,
+            builder: (context, isDraggingClim, _) {
+              return ValueListenableBuilder<bool>(
+                valueListenable: _isDraggingGoulotteNotifier,
+                builder: (context, isDraggingGoulotte, _) {
+                  // Si l'utilisateur touche une pièce, on cache le rendu final
+                  if (isDraggingClim || isDraggingGoulotte) return const SizedBox.shrink(); 
+                  
+                  return ValueListenableBuilder<double>(
+                    valueListenable: _splitNotifier,
+                    builder: (context, splitVal, _) {
+                      double currentSplit = _isDrawGoulotteMode ? 1.0 : splitVal;
+                      return Positioned.fill(
+                        child: ClipRect(
+                          clipper: _SplitClipper(currentSplit),
+                          child: Image.memory(_imageResultatBytes!, fit: BoxFit.contain, gaplessPlayback: true), 
+                        ),
+                      );
+                    }
+                  );
+                }
+              );
+            }
+          ),
+
+        // Le painter global de la goulotte
         Positioned.fill(
           child: IgnorePointer(
             child: ValueListenableBuilder<LigneGoulotte?>(
               valueListenable: _goulotteNotifier,
               builder: (context, goulotte, _) {
                 return ValueListenableBuilder<bool>(
-                  valueListenable: _isDraggingNotifier, // Etat du drag clim
-                  builder: (context, isDraggingClim, _) {
-                    return ValueListenableBuilder<bool>(
-                      valueListenable: _isDraggingGoulotteNotifier, // Etat du drag goulotte
-                      builder: (context, isDraggingGoulotte, _) {
-                        
-                        // On affiche la ligne 2D temporaire si on drag la goulotte OU LA CLIM !
-                        bool showLine = isDraggingClim || isDraggingGoulotte;
-                        // On affiche les ronds bleus (nœuds) uniquement si l'outil pinceau est activé
-                        bool showNodes = _isDrawGoulotteMode;
+                  valueListenable: _isDraggingGoulotteNotifier, 
+                  builder: (context, isDraggingGoulotte, _) {
+                    // On ne montre la ligne vectorielle blanche QUE lors du déplacement de la Goulotte
+                    bool showLine = isDraggingGoulotte;
+                    // On affiche les ronds bleus (nœuds) uniquement si l'outil pinceau est activé
+                    bool showNodes = _isDrawGoulotteMode;
 
-                        return CustomPaint(
-                          painter: _GoulottePainter(
-                            goulotte: goulotte,
-                            scale: scale,
-                            offsetX: offsetX,
-                            offsetY: offsetY,
-                            thicknessOrig: largeurGoulotteOrig,
-                            showLine: showLine,
-                            showNodes: showNodes,
-                          ),
-                        );
-                      }
+                    return CustomPaint(
+                      painter: _GoulottePainter(
+                        goulotte: goulotte,
+                        scale: scale,
+                        offsetX: offsetX,
+                        offsetY: offsetY,
+                        thicknessOrig: largeurGoulotteOrig,
+                        showLine: showLine,
+                        showNodes: showNodes,
+                      ),
                     );
                   }
                 );
@@ -765,6 +795,8 @@ class _EcranResultatState extends State<EcranResultat> {
                     child: GestureDetector(
                       behavior: HitTestBehavior.opaque,
                       onHorizontalDragUpdate: (details) {
+                        // Anti-Missclick pendant le zoom
+                        if (_activePointers > 1) return;
                         _splitNotifier.value = (_splitNotifier.value + details.delta.dx / constraints.maxWidth).clamp(0.0, 1.0);
                       },
                       child: SizedBox(
@@ -817,9 +849,13 @@ class _EcranResultatState extends State<EcranResultat> {
                       ignoring: _isDrawGoulotteMode,
                       child: GestureDetector(
                         behavior: HitTestBehavior.translucent,
-                        onPanStart: (_) => _isDraggingNotifier.value = true,
+                        onPanStart: (_) {
+                          if (_activePointers > 1) return;
+                          _isDraggingNotifier.value = true;
+                        },
                         onPanUpdate: (details) { 
-                           // CORRECTION DU BUG DE ROTATION POUR LA CLIM AUSSI (sécurité)
+                           if (_activePointers > 1 || !_isDraggingNotifier.value) return;
+                           
                            double cosA = math.cos(angleRad);
                            double sinA = math.sin(angleRad);
                            double globalDx = details.delta.dx * cosA - details.delta.dy * sinA;
@@ -831,21 +867,27 @@ class _EcranResultatState extends State<EcranResultat> {
                            );
                         },
                         onPanEnd: (_) { 
+                           if (!_isDraggingNotifier.value) return;
                            _isDraggingNotifier.value = false;
-                           _imageResultatSansGoulotteBytes = null; // Invalide le cache car la clim a bougée !
-                           _genererIncrustation(); 
+                           _genererIncrustation(recomputeClim: true, recomputeGoulotte: true); 
                          },
                         onPanCancel: () { 
+                           if (!_isDraggingNotifier.value) return;
                            _isDraggingNotifier.value = false;
-                           _imageResultatSansGoulotteBytes = null;
-                           _genererIncrustation(); 
+                           _genererIncrustation(recomputeClim: true, recomputeGoulotte: true); 
                          },
                         child: Transform.rotate(
                           angle: angleRad,
                           alignment: Alignment.topLeft, 
-                          child: Opacity(
-                            opacity: isDragging ? 0.65 : 0.0, 
-                            child: Image.asset(_modeleSelectionne!.chemin, fit: BoxFit.fill),
+                          // On enveloppe d'un ValueListenableBuilder Goulotte pour que la Clim apparaisse semi-transparente SI la goulotte est en cours de drag
+                          child: ValueListenableBuilder<bool>(
+                            valueListenable: _isDraggingGoulotteNotifier,
+                            builder: (context, isDraggingGoulotte, _) {
+                              return Opacity(
+                                opacity: (isDragging || isDraggingGoulotte) ? 0.65 : 0.0, 
+                                child: Image.asset(_modeleSelectionne!.chemin, fit: BoxFit.fill),
+                              );
+                            }
                           ),
                         ),
                       ),
@@ -871,6 +913,7 @@ class _EcranResultatState extends State<EcranResultat> {
                         child: GestureDetector(
                           behavior: HitTestBehavior.opaque,
                           onPanStart: (details) {
+                            if (_activePointers > 1) return;
                             // On garde la trace initiale sans provoquer la disparition de la zone tactile
                             Offset touchOrig = (details.localPosition - Offset(offsetX, offsetY)) / scale;
                             
@@ -880,6 +923,7 @@ class _EcranResultatState extends State<EcranResultat> {
                             _isDraggingGoulotteNotifier.value = true;
                           },
                           onPanUpdate: (details) {
+                            if (_activePointers > 1 || !_isDraggingGoulotteNotifier.value) return;
                             if (_goulotteStartOrig != null) {
                               Offset rawEnd = (details.localPosition - Offset(offsetX, offsetY)) / scale;
                               
@@ -894,16 +938,18 @@ class _EcranResultatState extends State<EcranResultat> {
                             }
                           },
                           onPanEnd: (_) {
+                            if (!_isDraggingGoulotteNotifier.value) return;
                             if (_goulotteStartOrig != null && _goulotteCurrentEndOrigNotifier.value != null) {
                               _isDraggingGoulotteNotifier.value = false;
                               // Validation finale de la goulotte, ce qui active les nœuds de Drag
                               _goulotteNotifier.value = LigneGoulotte(_goulotteStartOrig!, _goulotteCurrentEndOrigNotifier.value!);
                               _goulotteStartOrig = null;
                               _goulotteCurrentEndOrigNotifier.value = null;
-                              _genererIncrustation();
+                              _genererIncrustation(recomputeGoulotte: true);
                             }
                           },
                           onPanCancel: () {
+                            if (!_isDraggingGoulotteNotifier.value) return;
                             _isDraggingGoulotteNotifier.value = false;
                             _goulotteStartOrig = null;
                             _goulotteCurrentEndOrigNotifier.value = null;
@@ -1029,8 +1075,7 @@ class _EcranResultatState extends State<EcranResultat> {
                           if (_isProcessing) return;
                           setState(() {
                             _modeleSelectionne = clim;
-                            _imageResultatSansGoulotteBytes = null; // On force le rafraichissement total si on change de modèle
-                            _genererIncrustation();
+                            _genererIncrustation(recomputeClim: true, recomputeGoulotte: true);
                           });
                         },
                         child: AnimatedContainer(
@@ -1073,122 +1118,98 @@ class _EcranResultatState extends State<EcranResultat> {
         title: const Text('Configuration du Devis'),
         backgroundColor: Theme.of(context).colorScheme.inversePrimary,
       ),
-      body: Column(
-        children: [
-          Expanded(
-            child: Container(
-              width: double.infinity,
-              margin: const EdgeInsets.only(left: 16.0, right: 16.0, top: 16.0, bottom: 8.0),
-              child: Stack(
-                children: [
-                  Positioned.fill(
-                    child: ClipRRect(
-                      borderRadius: BorderRadius.circular(15),
-                      // Écoute l'état de la goulotte pour réactiver intelligemment le Pan/Zoom
-                      child: ValueListenableBuilder<LigneGoulotte?>(
-                        valueListenable: _goulotteNotifier,
-                        builder: (context, goulotte, _) {
-                          // Si le mode Goulotte n'est pas actif, OU si une goulotte existe déjà (et utilise le drag nodale) : on autorise le zoom !
-                          bool isPanZoomEnabled = !_isDrawGoulotteMode || goulotte != null;
-                          
-                          return InteractiveViewer(
-                            transformationController: _transformationController, 
-                            panEnabled: isPanZoomEnabled,
-                            scaleEnabled: isPanZoomEnabled,
-                            minScale: 1.0,
-                            maxScale: 8.0,
-                            child: LayoutBuilder(
-                              builder: (context, constraints) {
-                                if (_imageWidth == null || _imageHeight == null) {
-                                   return _isProcessing
-                                       ? Center(
-                                          child: Column(
-                                            mainAxisSize: MainAxisSize.min,
-                                            children: [
-                                              const CircularProgressIndicator(),
-                                              const SizedBox(height: 16),
-                                              Text(_loadingMessage, style: const TextStyle(fontWeight: FontWeight.bold)),
-                                            ],
-                                          ),
-                                        )
-                                      : Image.file(File(widget.photoPath), fit: BoxFit.contain);
-                                }
+      // AJOUT DU LISTENER GLOBAL : Permet de compter le nombre de doigts à l'écran
+      body: Listener(
+        onPointerDown: (_) {
+          _activePointers++;
+          if (_activePointers > 1) {
+            // Sécurité Anti-Missclick pendant le Zoom
+            // On annule silencieusement tous les glissements en cours (clim ou goulotte)
+            _isDraggingNotifier.value = false;
+            _isDraggingGoulotteNotifier.value = false;
+            _goulotteStartOrig = null;
+            _goulotteCurrentEndOrigNotifier.value = null;
+          }
+        },
+        onPointerUp: (_) {
+          _activePointers = math.max(0, _activePointers - 1);
+        },
+        onPointerCancel: (_) {
+          _activePointers = math.max(0, _activePointers - 1);
+        },
+        child: Column(
+          children: [
+            Expanded(
+              child: Container(
+                width: double.infinity,
+                margin: const EdgeInsets.only(left: 16.0, right: 16.0, top: 16.0, bottom: 8.0),
+                child: Stack(
+                  children: [
+                    Positioned.fill(
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(15),
+                        // Écoute l'état de la goulotte pour réactiver intelligemment le Pan/Zoom
+                        child: ValueListenableBuilder<LigneGoulotte?>(
+                          valueListenable: _goulotteNotifier,
+                          builder: (context, goulotte, _) {
+                            // Si le mode Goulotte n'est pas actif, OU si une goulotte existe déjà (et utilise le drag nodale) : on autorise le zoom !
+                            bool isPanZoomEnabled = !_isDrawGoulotteMode || goulotte != null;
+                            
+                            return InteractiveViewer(
+                              transformationController: _transformationController, 
+                              panEnabled: isPanZoomEnabled,
+                              scaleEnabled: isPanZoomEnabled,
+                              minScale: 1.0,
+                              maxScale: 8.0,
+                              child: LayoutBuilder(
+                                builder: (context, constraints) {
+                                  if (_imageWidth == null || _imageHeight == null) {
+                                     return _isProcessing
+                                         ? Center(
+                                            child: Column(
+                                              mainAxisSize: MainAxisSize.min,
+                                              children: [
+                                                const CircularProgressIndicator(),
+                                                const SizedBox(height: 16),
+                                                Text(_loadingMessage, style: const TextStyle(fontWeight: FontWeight.bold)),
+                                              ],
+                                            ),
+                                          )
+                                        : Image.file(File(widget.photoPath), fit: BoxFit.contain);
+                                  }
 
-                                if (_pointsCibles == null && !_isManualPlacementMode) {
-                                   return Image.file(File(widget.photoPath), fit: BoxFit.contain);
-                                }
+                                  if (_pointsCibles == null && !_isManualPlacementMode) {
+                                     return Image.file(File(widget.photoPath), fit: BoxFit.contain);
+                                  }
 
-                                double scale = math.min(constraints.maxWidth / _imageWidth!, constraints.maxHeight / _imageHeight!);
-                                double offsetX = (constraints.maxWidth - (_imageWidth! * scale)) / 2;
-                                double offsetY = (constraints.maxHeight - (_imageHeight! * scale)) / 2;
+                                  double scale = math.min(constraints.maxWidth / _imageWidth!, constraints.maxHeight / _imageHeight!);
+                                  double offsetX = (constraints.maxWidth - (_imageWidth! * scale)) / 2;
+                                  double offsetY = (constraints.maxHeight - (_imageHeight! * scale)) / 2;
 
-                                if (_isManualPlacementMode) {
-                                  return _buildCalquePlacementManuel(scale, offsetX, offsetY);
-                                } else {
-                                  return _buildCalqueResultat(scale, offsetX, offsetY, constraints);
-                                }
-                              },
-                            ),
-                          );
-                        }
-                      ),
-                    ),
-                  ),
-                  
-                  // Colonne de boutons d'action au dessus de l'image
-                  if (_modeleSelectionne != null && !_isManualPlacementMode)
-                    Positioned(
-                      top: 10,
-                      right: 10,
-                      child: Column(
-                        children: [
-                          ValueListenableBuilder<Offset>(
-                            valueListenable: _decalageNotifier,
-                            builder: (context, decalage, _) {
-                              if (decalage == Offset.zero) return const SizedBox.shrink();
-                              return Padding(
-                                padding: const EdgeInsets.only(bottom: 8.0),
-                                child: Material(
-                                  color: Colors.white.withValues(alpha: 0.9),
-                                  shape: const CircleBorder(),
-                                  elevation: 4,
-                                  child: IconButton(
-                                    icon: const Icon(Icons.restore),
-                                    color: Colors.teal,
-                                    tooltip: 'Réinitialiser la position',
-                                    onPressed: _isProcessing ? null : _reinitialiserPosition,
-                                  ),
-                                ),
-                              );
-                            }
-                          ),
-                          
-                          // Bouton d'activation du Mode Goulotte
-                          Padding(
-                            padding: const EdgeInsets.only(bottom: 8.0),
-                            child: Material(
-                              color: _isDrawGoulotteMode ? Colors.teal : Colors.white.withValues(alpha: 0.9),
-                              shape: const CircleBorder(),
-                              elevation: 4,
-                              child: IconButton(
-                                icon: Icon(Icons.format_paint, color: _isDrawGoulotteMode ? Colors.white : Colors.teal),
-                                tooltip: 'Tracer une goulotte',
-                                onPressed: _isProcessing ? null : () {
-                                  setState(() {
-                                    _isDrawGoulotteMode = !_isDrawGoulotteMode;
-                                    _isDraggingNotifier.value = false; 
-                                  });
+                                  if (_isManualPlacementMode) {
+                                    return _buildCalquePlacementManuel(scale, offsetX, offsetY);
+                                  } else {
+                                    return _buildCalqueResultat(scale, offsetX, offsetY, constraints);
+                                  }
                                 },
                               ),
-                            ),
-                          ),
-                          
-                          // Bouton pour ENLEVER la goulotte (Unique goulotte)
-                          if (_isDrawGoulotteMode) // NOUVEAU: Apparaît uniquement en mode goulotte
-                            ValueListenableBuilder<LigneGoulotte?>(
-                              valueListenable: _goulotteNotifier,
-                              builder: (context, goulotteActuelle, _) {
-                                if (goulotteActuelle == null) return const SizedBox.shrink();
+                            );
+                          }
+                        ),
+                      ),
+                    ),
+                    
+                    // Colonne de boutons d'action au dessus de l'image
+                    if (_modeleSelectionne != null && !_isManualPlacementMode)
+                      Positioned(
+                        top: 10,
+                        right: 10,
+                        child: Column(
+                          children: [
+                            ValueListenableBuilder<Offset>(
+                              valueListenable: _decalageNotifier,
+                              builder: (context, decalage, _) {
+                                if (decalage == Offset.zero) return const SizedBox.shrink();
                                 return Padding(
                                   padding: const EdgeInsets.only(bottom: 8.0),
                                   child: Material(
@@ -1196,53 +1217,97 @@ class _EcranResultatState extends State<EcranResultat> {
                                     shape: const CircleBorder(),
                                     elevation: 4,
                                     child: IconButton(
-                                      icon: const Icon(Icons.delete_outline),
-                                      color: Colors.red,
-                                      tooltip: 'Supprimer la goulotte',
-                                      onPressed: _isProcessing ? null : () {
-                                        // Sécurité pour éviter le missclick
-                                        showDialog(
-                                          context: context,
-                                          builder: (BuildContext context) {
-                                            return AlertDialog(
-                                              title: const Text("Supprimer la goulotte"),
-                                              content: const Text("Êtes-vous sûr de vouloir effacer cette goulotte ?"),
-                                              actions: [
-                                                TextButton(
-                                                  onPressed: () => Navigator.of(context).pop(),
-                                                  child: const Text("Annuler", style: TextStyle(color: Colors.grey)),
-                                                ),
-                                                ElevatedButton(
-                                                  style: ElevatedButton.styleFrom(backgroundColor: Colors.red, foregroundColor: Colors.white),
-                                                  onPressed: () {
-                                                    Navigator.of(context).pop();
-                                                    _goulotteNotifier.value = null; // Vide la goulotte unique
-                                                    _genererIncrustation(); // Réaffiche la photo sans goulotte
-                                                  },
-                                                  child: const Text("Supprimer"),
-                                                ),
-                                              ],
-                                            );
-                                          },
-                                        );
-                                      },
+                                      icon: const Icon(Icons.restore),
+                                      color: Colors.teal,
+                                      tooltip: 'Réinitialiser la position',
+                                      onPressed: _isProcessing ? null : _reinitialiserPosition,
                                     ),
                                   ),
                                 );
                               }
                             ),
-                        ],
+                            
+                            // Bouton d'activation du Mode Goulotte
+                            Padding(
+                              padding: const EdgeInsets.only(bottom: 8.0),
+                              child: Material(
+                                color: _isDrawGoulotteMode ? Colors.teal : Colors.white.withValues(alpha: 0.9),
+                                shape: const CircleBorder(),
+                                elevation: 4,
+                                child: IconButton(
+                                  icon: Icon(Icons.format_paint, color: _isDrawGoulotteMode ? Colors.white : Colors.teal),
+                                  tooltip: 'Tracer une goulotte',
+                                  onPressed: _isProcessing ? null : () {
+                                    setState(() {
+                                      _isDrawGoulotteMode = !_isDrawGoulotteMode;
+                                      _isDraggingNotifier.value = false; 
+                                    });
+                                  },
+                                ),
+                              ),
+                            ),
+                            
+                            // Bouton pour ENLEVER la goulotte (Unique goulotte)
+                            if (_isDrawGoulotteMode) // Apparaît uniquement en mode goulotte
+                              ValueListenableBuilder<LigneGoulotte?>(
+                                valueListenable: _goulotteNotifier,
+                                builder: (context, goulotteActuelle, _) {
+                                  if (goulotteActuelle == null) return const SizedBox.shrink();
+                                  return Padding(
+                                    padding: const EdgeInsets.only(bottom: 8.0),
+                                    child: Material(
+                                      color: Colors.white.withValues(alpha: 0.9),
+                                      shape: const CircleBorder(),
+                                      elevation: 4,
+                                      child: IconButton(
+                                        icon: const Icon(Icons.delete_outline),
+                                        color: Colors.red,
+                                        tooltip: 'Supprimer la goulotte',
+                                        onPressed: _isProcessing ? null : () {
+                                          // Sécurité pour éviter le missclick
+                                          showDialog(
+                                            context: context,
+                                            builder: (BuildContext context) {
+                                              return AlertDialog(
+                                                title: const Text("Supprimer la goulotte"),
+                                                content: const Text("Êtes-vous sûr de vouloir effacer cette goulotte ?"),
+                                                actions: [
+                                                  TextButton(
+                                                    onPressed: () => Navigator.of(context).pop(),
+                                                    child: const Text("Annuler", style: TextStyle(color: Colors.grey)),
+                                                  ),
+                                                  ElevatedButton(
+                                                    style: ElevatedButton.styleFrom(backgroundColor: Colors.red, foregroundColor: Colors.white),
+                                                    onPressed: () {
+                                                      Navigator.of(context).pop();
+                                                      _goulotteNotifier.value = null; // Vide la goulotte unique
+                                                      _genererIncrustation(recomputeGoulotte: true); // Réaffiche la photo sans goulotte
+                                                    },
+                                                    child: const Text("Supprimer"),
+                                                  ),
+                                                ],
+                                              );
+                                            },
+                                          );
+                                        },
+                                      ),
+                                    ),
+                                  );
+                                }
+                              ),
+                          ],
+                        ),
                       ),
-                    ),
-                ],
+                  ],
+                ),
               ),
             ),
-          ),
 
-          if (_pointsCibles != null && !_isManualPlacementMode) _buildCatalogue(),
+            if (_pointsCibles != null && !_isManualPlacementMode) _buildCatalogue(),
 
-          const SizedBox(height: 80),
-        ],
+            const SizedBox(height: 80),
+          ],
+        ),
       ),
       
       floatingActionButton: _isManualPlacementMode

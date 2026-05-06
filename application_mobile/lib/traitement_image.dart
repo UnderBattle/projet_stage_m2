@@ -24,12 +24,12 @@ class TraitementImage {
       decalageY: params['decalageY'] as double,
       climAssetPath: params['climAssetPath'] as String,
       profondeurMm: params['profondeurMm'] as double,
-      hauteurMm: params['hauteurMm'] as double, // Passage de la hauteur dynamique
-      largeurMm: params['largeurMm'] as double, // Passage de la largeur dynamique
+      hauteurMm: params['hauteurMm'] as double, // AJOUT : Passage de la hauteur dynamique
+      largeurMm: params['largeurMm'] as double, // AJOUT : Passage de la largeur dynamique
     );
   }
 
-  // Isolate dédié pour le tracé fluide de la goulotte
+  // AJOUT : Isolate dédié pour le tracé fluide de la goulotte
   static Future<Uint8List?> incrusterGoulotteIsolate(Map<String, dynamic> params) async {
     return await incrusterGoulotte(
       imageAvecClimBytes: params['imageAvecClimBytes'] as Uint8List,
@@ -101,7 +101,7 @@ class TraitementImage {
         try {
           print("[IA Inpainting] Démarrage de l'analyse LaMa...");
           
-          // Élargissement du contexte. En passant de 1.8 à 2.5, LaMa voit beaucoup plus 
+          // AJOUT : Élargissement du contexte. En passant de 1.8 à 2.5, LaMa voit beaucoup plus 
           // du mur autour et a beaucoup plus de facilité à reproduire les motifs complexes.
           int cropS = (math.max(rect.width, rect.height) * 2.5).toInt();
           int cropX = (rect.x + rect.width / 2 - cropS / 2).toInt();
@@ -138,8 +138,8 @@ class TraitementImage {
           Uint8List maskBytes = mask512.data;
 
           // Préparation des tenseurs pour TFLite
-          var inputImg = List.generate(1, (i) => List.generate(512, (j) => List.generate(512, (k) => List.generate(3, (l) => 0.0))));
-          var inputMask = List.generate(1, (i) => List.generate(512, (j) => List.generate(512, (k) => List.generate(1, (l) => 0.0))));
+          var inputImg = List.generate(1, (i) => List.generate(512, (j) => List.generate(512, (k) => Float32List(3))));
+          var inputMask = List.generate(1, (i) => List.generate(512, (j) => List.generate(512, (k) => Float32List(1))));
           
           int idx = 0;
           for (int y = 0; y < 512; y++) {
@@ -158,7 +158,7 @@ class TraitementImage {
           
           var tensor0 = interpreter.getInputTensor(0);
           List<Object> inputs = (tensor0.shape.last == 3) ? [inputImg, inputMask] : [inputMask, inputImg];
-          var outputImg = List.generate(1, (i) => List.generate(512, (j) => List.generate(512, (k) => List.generate(3, (l) => 0.0))));
+          var outputImg = List.generate(1, (i) => List.generate(512, (j) => List.generate(512, (k) => Float32List(3))));
           
           interpreter.runForMultipleInputs(inputs, {0: outputImg});
 
@@ -181,7 +181,7 @@ class TraitementImage {
           // =================================================================================
           // UPSCALING PRO ET FILTRE DE NETTETÉ (Pour tuer le flou d'agrandissement)
           // =================================================================================
-          // On utilise INTER_LANCZOS4 au lieu de INTER_CUBIC. C'est l'algorithme le plus 
+          // AJOUT : On utilise INTER_LANCZOS4 au lieu de INTER_CUBIC. C'est l'algorithme le plus 
           // performant pour garder la netteté de la texture quand on agrandit l'image de l'IA.
           cv.Mat patchFinal = cv.resize(patch512, (cropS, cropS), interpolation: cv.INTER_LANCZOS4);
           
@@ -189,7 +189,7 @@ class TraitementImage {
           cv.Mat blurredPatch = cv.gaussianBlur(patchFinal, (0, 0), 2.0); 
           cv.Mat patchNet = cv.addWeighted(patchFinal, 1.5, blurredPatch, -0.5, 0.0);
           
-          // Injection de grain photographique (Noise Matching). 
+          // AJOUT : Injection de grain photographique (Noise Matching). 
           // L'IA génère un rendu "plastique". On ajoute du bruit iso pour faire correspondre 
           // la zone réparée à la texture granuleuse de la vraie photo du téléphone.
           cv.Mat patchFloat = patchNet.convertTo(cv.MatType.CV_32FC3);
@@ -697,18 +697,57 @@ class TraitementImage {
       cv.Point p1 = cv.Point(ptDepartX.toInt(), ptDepartY.toInt());
       cv.Point p2 = cv.Point(ptArriveeX.toInt(), ptArriveeY.toInt());
 
-      // 1. Création du masque binaire de la goulotte
+      // Identifier le bas (y le plus grand) pour appliquer la perspective du bouchon
+      cv.Point bottomPt = p1.y > p2.y ? p1 : p2;
+      cv.Point topPt = p1.y > p2.y ? p2 : p1;
+
+      double dxCap = (bottomPt.x - topPt.x).toDouble();
+      double dyCap = (bottomPt.y - topPt.y).toDouble();
+      double lenCap = math.sqrt(dxCap * dxCap + dyCap * dyCap);
+
+      // Variables géométriques pour le bouchon 3D
+      cv.Point ptLeft = bottomPt;
+      cv.Point ptRight = bottomPt;
+      cv.Point ptLeftMur = bottomPt;
+      cv.Point ptRightMur = bottomPt;
+
+      if (lenCap >= 1.0) {
+        double uxCap = dxCap / lenCap;
+        double uyCap = dyCap / lenCap;
+        double nxCap = -uyCap;
+        double nyCap = uxCap;
+        double htCap = largeurPx / 2.0;
+
+        // Base plate inférieure du cylindre de plastique
+        ptLeft = cv.Point((bottomPt.x - nxCap * htCap).toInt(), (bottomPt.y - nyCap * htCap).toInt());
+        ptRight = cv.Point((bottomPt.x + nxCap * htCap).toInt(), (bottomPt.y + nyCap * htCap).toInt());
+
+        // La fuite en perspective (le bouchon qui s'enfonce vers le mur) 
+        // se fait maintenant uniquement vers le bas (axe Y pur)
+        double depthExtrusion = largeurPx * 0.20; // Le bouchon recule de 20% de la largeur de la goulotte
+        double ex = 0.0; // Pas de décalage à droite/gauche
+        double ey = depthExtrusion; // Décalage uniquement vers le bas
+
+        // Effet de rétrécissement pour simuler la perspective lointaine (le mur)
+        double shrinkFactor = 0.85; 
+        ptLeftMur = cv.Point((bottomPt.x - nxCap * htCap * shrinkFactor + ex).toInt(), 
+                             (bottomPt.y - nyCap * htCap * shrinkFactor + ey).toInt());
+        ptRightMur = cv.Point((bottomPt.x + nxCap * htCap * shrinkFactor + ex).toInt(), 
+                              (bottomPt.y + nyCap * htCap * shrinkFactor + ey).toInt());
+      }
+
+      // 1. Création du masque binaire global (Goulotte + Bouchon)
       cv.Mat maskBinaire = cv.Mat.zeros(h, w, cv.MatType.CV_8UC1);
       _tracerLigneRectangulaire(maskBinaire, p1, p2, cv.Scalar.all(255), largeurPx);
+      if (lenCap >= 1.0) {
+        cv.fillPoly(maskBinaire, cv.VecVecPoint.fromList([[ptLeft, ptRight, ptRightMur, ptLeftMur]]), cv.Scalar.all(255), lineType: cv.LINE_AA);
+      }
 
       // 2. Base visuelle de la goulotte (Construction du Shader 3D)
       cv.Mat goulotteBgr = cv.Mat.zeros(h, w, cv.MatType.CV_8UC3);
       
-      // POUR RÉGLER LA LUMINOSITÉ (Couleurs de base de la goulotte)
-      // Augmente ces valeurs vers 255 si le plastique te semble trop gris sombre d'origine.
-      
       // Couche de fond (Les bords sombres du plastique qui fuient vers le mur)
-      _tracerLigneRectangulaire(goulotteBgr, p1, p2, cv.Scalar(200, 200, 200, 0), largeurPx);
+      _tracerLigneRectangulaire(goulotteBgr, p1, p2, cv.Scalar(210, 210, 210, 0), largeurPx);
       // Couche principale (Gris clair plastique)
       _tracerLigneRectangulaire(goulotteBgr, p1, p2, cv.Scalar(240, 245, 245, 0), largeurPx * 0.85);
       // Lumière diffuse sur le dessus
@@ -716,8 +755,19 @@ class TraitementImage {
       // Reflet spéculaire (Ligne de lumière très fine pour le côté lisse/brillant)
       _tracerLigneRectangulaire(goulotteBgr, p1, p2, cv.Scalar(255, 255, 255, 0), largeurPx * 0.15);
       
-      // Un petit coup de blur sur le shader pour fondre les couches entre elles et faire un vrai dégradé 3D
+      // Un petit coup de blur sur le shader pour fondre les couches entre elles et faire un vrai dégradé cylindrique
       cv.Mat goulotteBgrSmooth = cv.gaussianBlur(goulotteBgr, (5, 5), 0.0);
+
+      // AJOUT DE LA PERSPECTIVE 3D AU BAS DE LA GOULOTTE
+      if (lenCap >= 1.0) {
+        // On dessine la face inférieure (qui s'enfonce vers le mur) APRES le flou pour garder des arêtes nettes type moulage plastique
+        // La couleur est plus sombre car c'est une zone d'ombre propre (face orientée vers le bas)
+        cv.fillPoly(goulotteBgrSmooth, cv.VecVecPoint.fromList([[ptLeft, ptRight, ptRightMur, ptLeftMur]]), cv.Scalar(160, 165, 165, 0), lineType: cv.LINE_AA);
+        
+        // Ligne d'arête pour marquer nettement le volume et la cassure 3D
+        int edgeThickness = math.max(1, (largeurPx * 0.05).toInt());
+        cv.line(goulotteBgrSmooth, ptLeft, ptRight, cv.Scalar(190, 195, 195, 0), thickness: edgeThickness, lineType: cv.LINE_AA);
+      }
 
       // 3. Création de l'ombre portée de la goulotte (Drop Shadow)
       cv.Mat affineMatDir = cv.getAffineTransform(
@@ -780,10 +830,10 @@ class TraitementImage {
       cv.Mat ratioMap = grayLisseF.convertTo(cv.MatType.CV_32FC1, alpha: 1.0 / lumaGoulotteNative);
       cv.Mat matriceUn = cv.Mat.zeros(h, w, cv.MatType.CV_32FC1)..setTo(cv.Scalar.all(1.0));
       
-      // 👉 POUR RÉGLER LA LUMINOSITÉ (Influence du mur)
+      // POUR RÉGLER LA LUMINOSITÉ (Influence du mur)
       // Si la goulotte est trop sombre sur un mur foncé, baisse cette variable vers 0.30 ou 0.20
       // pour que la goulotte "ignore" l'obscurité du mur en dessous d'elle.
-      double influenceMurGoulotte = 0.45; 
+      double influenceMurGoulotte = 0.43; 
       cv.Mat ratioSecurise = cv.addWeighted(ratioMap, influenceMurGoulotte, matriceUn, 1.0 - influenceMurGoulotte, 0.0);
       
       cv.Mat vChannelF = hsvChannels[2].convertTo(cv.MatType.CV_32FC1);
