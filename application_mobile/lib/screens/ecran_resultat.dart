@@ -15,6 +15,18 @@ class LigneGoulotte {
   final Offset start;
   final Offset end;
   LigneGoulotte(this.start, this.end);
+
+  // Surcharge des opérateurs pour comparer facilement deux goulottes (Utile pour le Undo)
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is LigneGoulotte &&
+          runtimeType == other.runtimeType &&
+          start == other.start &&
+          end == other.end;
+
+  @override
+  int get hashCode => start.hashCode ^ end.hashCode;
 }
 
 // Les différents états d'interaction avec la goulotte
@@ -43,10 +55,13 @@ class _EcranResultatState extends State<EcranResultat> {
   
   Uint8List? _imageResultatBytes; // L'image finale (avec goulotte + clim)
   
-  // NOUVEAU CACHE OPTIMISÉ : On mémorise le Mur + Goulotte.
-  // Ainsi, si seule la clim bouge, on ne recalcule JAMAIS la goulotte !
-  Uint8List? _imageFondAvecGoulotteBytes; 
+  // =========================================================================
+  // === SYSTÈME DE CACHE INDÉPENDANT ===
+  // =========================================================================
+  // En séparant la clim et la goulotte dans 2 variables différentes, on évite les recalculs inutiles !
   Uint8List? _imageFondPropreBytes;
+  Uint8List? _imageFondAvecGoulotteBytes; 
+  Uint8List? _calqueClimPngBytes; // Le calque de la Clim transparent (PNG)
   
   int? _imageWidth;
   int? _imageHeight;
@@ -66,6 +81,8 @@ class _EcranResultatState extends State<EcranResultat> {
   // Variables d'état pour la Goulotte interactive
   bool _isDrawGoulotteMode = false;
   final ValueNotifier<LigneGoulotte?> _goulotteNotifier = ValueNotifier(null);
+  LigneGoulotte? _goulotteInitiale; // Mémoire de la position de départ de la goulotte pour le bouton Undo
+  
   final ValueNotifier<bool> _isDraggingGoulotteNotifier = ValueNotifier(false);
 
   // Variables temporaires pour ne pas casser le drag du tout premier tracé
@@ -215,6 +232,7 @@ class _EcranResultatState extends State<EcranResultat> {
             'lamaBytes': IAService().lamaBytes,
           });
           _imageFondAvecGoulotteBytes = null; // Sécurité Cache
+          _calqueClimPngBytes = null;
         }
         
         setState(() {
@@ -295,7 +313,8 @@ class _EcranResultatState extends State<EcranResultat> {
         'pointsIA': _pointsCibles!,
         'lamaBytes': IAService().lamaBytes,
       });
-      _imageFondAvecGoulotteBytes = null; // On nettoie le cache car la base a changé
+      _imageFondAvecGoulotteBytes = null; // On nettoie les caches car la base a changé
+      _calqueClimPngBytes = null;
     } catch (e) {
       print("Erreur inpainting manuel : $e");
     }
@@ -305,8 +324,8 @@ class _EcranResultatState extends State<EcranResultat> {
     });
   }
 
-  // NOUVELLE ARCHITECTURE DE CACHE (Mur -> Goulotte -> Clim)
-  Future<void> _genererIncrustation({bool recomputeGoulotte = false}) async {
+  // NOUVELLE ARCHITECTURE : On choisit ce qu'on recalcule !
+  Future<void> _genererIncrustation({bool recomputeGoulotte = false, bool recomputeClim = false}) async {
     if (_pointsCibles == null || _modeleSelectionne == null || _imageFondPropreBytes == null) return;
     
     setState(() {
@@ -323,11 +342,6 @@ class _EcranResultatState extends State<EcranResultat> {
       double hauteur = _modeleSelectionne!.hauteur;
       double largeur = _modeleSelectionne!.largeur;
 
-      // Si on modifie la goulotte, on vide son cache pour forcer le recalcul
-      if (recomputeGoulotte) {
-        _imageFondAvecGoulotteBytes = null;
-      }
-
       double ptHgXOrig = _pointsCibles![0]['x']! * (_imageWidth! / 1024.0);
       double ptHgYOrig = _pointsCibles![0]['y']! * (_imageHeight! / 1024.0);
       double ptHdXOrig = _pointsCibles![1]['x']! * (_imageWidth! / 1024.0);
@@ -335,45 +349,52 @@ class _EcranResultatState extends State<EcranResultat> {
       double dx = ptHdXOrig - ptHgXOrig;
       double dy = ptHdYOrig - ptHgYOrig;
       
-      // autoWPxOrig correspond aux 50 mm physiques de l'autocollant
       double autoWPxOrig = math.sqrt(dx * dx + dy * dy);
-      
-      // La goulotte a une largeur réelle fixe de 80mm
       double ratioPxParMm = autoWPxOrig / 50.0;
       double largeurGoulotteOrig = 80.0 * ratioPxParMm; 
 
-      // 1. GÉNÉRATION DE LA GOULOTTE (Seulement si elle a changé ou vient d'être tracée)
-      if (_goulotteNotifier.value != null && _imageFondAvecGoulotteBytes == null) {
-        setState(() => _loadingMessage = "Incrustation de la goulotte...");
-        
-        _imageFondAvecGoulotteBytes = await compute(TraitementImage.incrusterGoulotteIsolate, {
-          'imageAvecClimBytes': _imageFondPropreBytes!, // La Goulotte est dessinée sur le mur propre
-          'ptDepartX': _goulotteNotifier.value!.start.dx,
-          'ptDepartY': _goulotteNotifier.value!.start.dy,
-          'ptArriveeX': _goulotteNotifier.value!.end.dx,
-          'ptArriveeY': _goulotteNotifier.value!.end.dy,
-          'largeurPx': largeurGoulotteOrig, 
-        });
-      } else if (_goulotteNotifier.value == null) {
-        _imageFondAvecGoulotteBytes = null;
+      // 1. GÉNÉRATION DE LA GOULOTTE (Seulement si demandé ou pas en cache)
+      if (recomputeGoulotte || (_goulotteNotifier.value != null && _imageFondAvecGoulotteBytes == null)) {
+        if (_goulotteNotifier.value != null) {
+          setState(() => _loadingMessage = "Incrustation de la goulotte...");
+          
+          _imageFondAvecGoulotteBytes = await compute(TraitementImage.incrusterGoulotteIsolate, {
+            'imageAvecClimBytes': _imageFondPropreBytes!, // Toujours dessiné sur le mur propre !
+            'ptDepartX': _goulotteNotifier.value!.start.dx,
+            'ptDepartY': _goulotteNotifier.value!.start.dy,
+            'ptArriveeX': _goulotteNotifier.value!.end.dx,
+            'ptArriveeY': _goulotteNotifier.value!.end.dy,
+            'largeurPx': largeurGoulotteOrig, 
+          });
+        } else {
+          _imageFondAvecGoulotteBytes = null;
+        }
       }
 
-      // 2. GÉNÉRATION DE LA CLIMATISATION PAR-DESSUS LA GOULOTTE
-      setState(() => _loadingMessage = "Calcul des ombres de la clim...");
-      
-      // La base pour OpenCV est le mur contenant déjà la goulotte (ou le mur propre si pas de goulotte)
-      Uint8List basePourClim = _imageFondAvecGoulotteBytes ?? _imageFondPropreBytes!;
+      // 2. GÉNÉRATION DU CALQUE DE LA CLIMATISATION EN PNG (Seulement si demandé ou pas en cache)
+      if (recomputeClim || _calqueClimPngBytes == null) {
+        setState(() => _loadingMessage = "Calcul des ombres de la clim...");
+        
+        _calqueClimPngBytes = await compute(TraitementImage.genererCalqueClimatisationIsolate, {
+          'fondPropreBytes': _imageFondPropreBytes!, // Toujours calculée d'après le mur propre !
+          'climBytes': climBytes,
+          'pointsIA': _pointsCibles!,
+          'decalageX': _decalageNotifier.value.dx,
+          'decalageY': _decalageNotifier.value.dy,
+          'climAssetPath': climPath,
+          'profondeurMm': profondeur,
+          'hauteurMm': hauteur, 
+          'largeurMm': largeur, 
+        });
+      }
 
-      Uint8List? resultImage = await compute(TraitementImage.incrusterClimatisationIsolate, {
-        'fondPropreBytes': basePourClim,
-        'climBytes': climBytes,
-        'pointsIA': _pointsCibles!,
-        'decalageX': _decalageNotifier.value.dx,
-        'decalageY': _decalageNotifier.value.dy,
-        'climAssetPath': climPath,
-        'profondeurMm': profondeur,
-        'hauteurMm': hauteur, 
-        'largeurMm': largeur, 
+      // 3. FUSION INSTANTANÉE DES DEUX CALQUES
+      setState(() => _loadingMessage = "Assemblage final...");
+      Uint8List fondBase = _imageFondAvecGoulotteBytes ?? _imageFondPropreBytes!;
+
+      Uint8List? resultImage = await compute(TraitementImage.fusionnerCalqueIsolate, {
+        'fondBytes': fondBase,
+        'calquePngBytes': _calqueClimPngBytes!
       });
 
       if (resultImage != null) {
@@ -389,12 +410,23 @@ class _EcranResultatState extends State<EcranResultat> {
     }
   }
 
+  // Méthode globale qui annule intelligemment le dernier mouvement selon l'outil actif.
   void _reinitialiserPosition() {
     if (_isProcessing) return;
-    if (_decalageNotifier.value == Offset.zero) return;
-    _decalageNotifier.value = Offset.zero;
-    // La goulotte n'ayant pas bougé, on utilise le cache !
-    _genererIncrustation(recomputeGoulotte: false); 
+
+    if (_isDrawGoulotteMode) {
+      // Mode Goulotte : On annule le mouvement et on revient à la ligne d'origine
+      if (_goulotteNotifier.value != null && _goulotteInitiale != null) {
+        _goulotteNotifier.value = _goulotteInitiale;
+        _genererIncrustation(recomputeGoulotte: true, recomputeClim: false);
+      }
+    } else {
+      // Mode Clim : On annule le décalage
+      if (_decalageNotifier.value != Offset.zero) {
+        _decalageNotifier.value = Offset.zero;
+        _genererIncrustation(recomputeGoulotte: false, recomputeClim: true);
+      }
+    }
   }
 
   Future<void> _sauvegarderImage() async {
@@ -590,12 +622,13 @@ class _EcranResultatState extends State<EcranResultat> {
             onPanEnd: (_) {
               if (!_isDraggingGoulotteNotifier.value) return;
               _isDraggingGoulotteNotifier.value = false;
-              _genererIncrustation(recomputeGoulotte: true);
+              // Seule la goulotte a bougé !
+              _genererIncrustation(recomputeGoulotte: true, recomputeClim: false);
             },
             onPanCancel: () {
               if (!_isDraggingGoulotteNotifier.value) return;
               _isDraggingGoulotteNotifier.value = false;
-              _genererIncrustation(recomputeGoulotte: true);
+              _genererIncrustation(recomputeGoulotte: true, recomputeClim: false);
             },
             child: Container(width: len, height: 40, color: Colors.transparent),
           ),
@@ -636,13 +669,13 @@ class _EcranResultatState extends State<EcranResultat> {
             _magnifierPositionNotifier.value = null; // Cache la loupe
             if (!_isDraggingGoulotteNotifier.value) return;
             _isDraggingGoulotteNotifier.value = false;
-            _genererIncrustation(recomputeGoulotte: true);
+            _genererIncrustation(recomputeGoulotte: true, recomputeClim: false);
           },
           onPanCancel: () {
             _magnifierPositionNotifier.value = null; // Cache la loupe
             if (!_isDraggingGoulotteNotifier.value) return;
             _isDraggingGoulotteNotifier.value = false;
-            _genererIncrustation(recomputeGoulotte: true);
+            _genererIncrustation(recomputeGoulotte: true, recomputeClim: false);
           },
           child: Container(width: 50, height: 50, color: Colors.transparent),
         ),
@@ -682,13 +715,13 @@ class _EcranResultatState extends State<EcranResultat> {
             _magnifierPositionNotifier.value = null; // Cache la loupe
             if (!_isDraggingGoulotteNotifier.value) return;
             _isDraggingGoulotteNotifier.value = false;
-            _genererIncrustation(recomputeGoulotte: true);
+            _genererIncrustation(recomputeGoulotte: true, recomputeClim: false);
           },
           onPanCancel: () {
             _magnifierPositionNotifier.value = null; // Cache la loupe
             if (!_isDraggingGoulotteNotifier.value) return;
             _isDraggingGoulotteNotifier.value = false;
-            _genererIncrustation(recomputeGoulotte: true);
+            _genererIncrustation(recomputeGoulotte: true, recomputeClim: false);
           },
           child: Container(width: 50, height: 50, color: Colors.transparent),
         ),
@@ -914,12 +947,12 @@ class _EcranResultatState extends State<EcranResultat> {
                            if (!_isDraggingNotifier.value) return;
                            _isDraggingNotifier.value = false;
                            // On ne re-calcule que la Clim ! C'est ce qui fait gagner du temps.
-                           _genererIncrustation(recomputeGoulotte: false); 
+                           _genererIncrustation(recomputeGoulotte: false, recomputeClim: true); 
                          },
                         onPanCancel: () { 
                            if (!_isDraggingNotifier.value) return;
                            _isDraggingNotifier.value = false;
-                           _genererIncrustation(recomputeGoulotte: false); 
+                           _genererIncrustation(recomputeGoulotte: false, recomputeClim: true); 
                          },
                         child: Transform.rotate(
                           angle: angleRad,
@@ -949,7 +982,7 @@ class _EcranResultatState extends State<EcranResultat> {
             child: ValueListenableBuilder<LigneGoulotte?>(
               valueListenable: _goulotteNotifier,
               builder: (context, goulotte, _) {
-                // La couche d'interaction (CORRECTION DU BUG DE DESSIN)
+                // La couche d'interaction
                 if (goulotte == null) {
                   // A - Mode plein écran pour tracer la toute première goulotte
                   return GestureDetector(
@@ -990,11 +1023,16 @@ class _EcranResultatState extends State<EcranResultat> {
                       if (!_isDraggingGoulotteNotifier.value) return;
                       if (_goulotteStartOrig != null && _goulotteCurrentEndOrigNotifier.value != null) {
                         _isDraggingGoulotteNotifier.value = false;
-                        // Validation finale de la goulotte, ce qui active les nœuds de Drag
-                        _goulotteNotifier.value = LigneGoulotte(_goulotteStartOrig!, _goulotteCurrentEndOrigNotifier.value!);
+                        
+                        // Sauvegarde de la goulotte pour le Reset et affectation finale
+                        LigneGoulotte newGoulotte = LigneGoulotte(_goulotteStartOrig!, _goulotteCurrentEndOrigNotifier.value!);
+                        _goulotteInitiale = newGoulotte; 
+                        _goulotteNotifier.value = newGoulotte;
+                        
                         _goulotteStartOrig = null;
                         _goulotteCurrentEndOrigNotifier.value = null;
-                        _genererIncrustation(recomputeGoulotte: true);
+                        // On trace la toute première goulotte
+                        _genererIncrustation(recomputeGoulotte: true, recomputeClim: false);
                       }
                     },
                     onPanCancel: () {
@@ -1033,7 +1071,7 @@ class _EcranResultatState extends State<EcranResultat> {
             ),
           ),
 
-        // AJOUT 5. Le calque ultime au-dessus de tout : La Loupe de Précision (Magnifier)
+        // Le calque ultime au-dessus de tout : La Loupe de Précision (Magnifier)
         ValueListenableBuilder<Offset?>(
           valueListenable: _magnifierPositionNotifier,
           builder: (context, magPos, _) {
@@ -1156,8 +1194,8 @@ class _EcranResultatState extends State<EcranResultat> {
                           if (_isProcessing) return;
                           setState(() {
                             _modeleSelectionne = clim;
-                            // En cas de changement de modèle, on ne recalcule PAS la goulotte car la base n'a pas changé.
-                            _genererIncrustation(recomputeGoulotte: false);
+                            // En cas de changement de modèle, on ne recalcule QUE la clim !
+                            _genererIncrustation(recomputeGoulotte: false, recomputeClim: true);
                           });
                         },
                         child: AnimatedContainer(
@@ -1289,23 +1327,52 @@ class _EcranResultatState extends State<EcranResultat> {
                         right: 10,
                         child: Column(
                           children: [
-                            ValueListenableBuilder<Offset>(
-                              valueListenable: _decalageNotifier,
-                              builder: (context, decalage, _) {
-                                if (decalage == Offset.zero) return const SizedBox.shrink();
-                                return Padding(
-                                  padding: const EdgeInsets.only(bottom: 8.0),
-                                  child: Material(
-                                    color: Colors.white.withValues(alpha: 0.9),
-                                    shape: const CircleBorder(),
-                                    elevation: 4,
-                                    child: IconButton(
-                                      icon: const Icon(Icons.restore),
-                                      color: Colors.teal,
-                                      tooltip: 'Réinitialiser la position',
-                                      onPressed: _isProcessing ? null : _reinitialiserPosition,
-                                    ),
-                                  ),
+                            // Le bouton Réinitialiser intelligent (grisé pendant le drag ou le calcul)
+                            ValueListenableBuilder<bool>(
+                              valueListenable: _isDraggingNotifier,
+                              builder: (context, isDraggingClim, _) {
+                                return ValueListenableBuilder<bool>(
+                                  valueListenable: _isDraggingGoulotteNotifier,
+                                  builder: (context, isDraggingGoulotte, _) {
+                                    return ValueListenableBuilder<LigneGoulotte?>(
+                                      valueListenable: _goulotteNotifier,
+                                      builder: (context, goulotteActuelle, _) {
+                                        return ValueListenableBuilder<Offset>(
+                                          valueListenable: _decalageNotifier,
+                                          builder: (context, decalage, _) {
+                                            
+                                            // 1. Est-ce que le bouton a une raison d'être affiché ?
+                                            bool showResetClim = !_isDrawGoulotteMode && decalage != Offset.zero;
+                                            bool showResetGoulotte = _isDrawGoulotteMode && 
+                                                                     goulotteActuelle != null && 
+                                                                     _goulotteInitiale != null && 
+                                                                     goulotteActuelle != _goulotteInitiale;
+
+                                            // Si on n'a rien bougé, on ne montre pas le bouton
+                                            if (!showResetClim && !showResetGoulotte) return const SizedBox.shrink();
+
+                                            // 2. Est-ce que le bouton doit être désactivé (grisé) ?
+                                            bool isDisabled = _isProcessing || isDraggingClim || isDraggingGoulotte;
+
+                                            return Padding(
+                                              padding: const EdgeInsets.only(bottom: 8.0),
+                                              child: Material(
+                                                color: Colors.white.withValues(alpha: isDisabled ? 0.5 : 0.9), // Grise le fond si inactif
+                                                shape: const CircleBorder(),
+                                                elevation: isDisabled ? 0 : 4, // Retire l'ombre si inactif
+                                                child: IconButton(
+                                                  icon: const Icon(Icons.restore),
+                                                  color: isDisabled ? Colors.grey : Colors.teal, // Grise l'icône si inactif
+                                                  tooltip: _isDrawGoulotteMode ? 'Réinitialiser la goulotte' : 'Réinitialiser la clim',
+                                                  onPressed: isDisabled ? null : _reinitialiserPosition, // Désactive l'action
+                                                ),
+                                              ),
+                                            );
+                                          }
+                                        );
+                                      }
+                                    );
+                                  }
                                 );
                               }
                             ),
@@ -1364,8 +1431,9 @@ class _EcranResultatState extends State<EcranResultat> {
                                                     onPressed: () {
                                                       Navigator.of(context).pop();
                                                       _goulotteNotifier.value = null; // Vide la goulotte unique
-                                                      // On force le recalcul de la goulotte (qui devient nulle)
-                                                      _genererIncrustation(recomputeGoulotte: true); 
+                                                      _goulotteInitiale = null; // On vide aussi l'historique
+                                                      // On force le recalcul uniquement de la goulotte (qui disparaît)
+                                                      _genererIncrustation(recomputeGoulotte: true, recomputeClim: false); 
                                                     },
                                                     child: const Text("Supprimer"),
                                                   ),

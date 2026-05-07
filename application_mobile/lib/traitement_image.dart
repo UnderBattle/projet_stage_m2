@@ -16,9 +16,9 @@ class TraitementImage {
     );
   }
 
-  /// Isolate pour incruster la climatisation sur le mur.
-  static Future<Uint8List?> incrusterClimatisationIsolate(Map<String, dynamic> params) async {
-    return await incrusterClimatisation(
+  /// NOUVEAU : Isolate pour générer la climatisation sur fond transparent (PNG).
+  static Future<Uint8List?> genererCalqueClimatisationIsolate(Map<String, dynamic> params) async {
+    return await genererCalqueClimatisation(
       fondPropreBytes: params['fondPropreBytes'] as Uint8List,
       climBytes: params['climBytes'] as Uint8List,
       pointsIA: (params['pointsIA'] as List).map((e) => Map<String, double>.from(e)).toList(),
@@ -29,6 +29,46 @@ class TraitementImage {
       hauteurMm: params['hauteurMm'] as double,
       largeurMm: params['largeurMm'] as double,
     );
+  }
+
+  /// NOUVEAU : Isolate d'assemblage ultra-rapide (Fusionne n'importe quel fond avec le PNG transparent)
+  static Future<Uint8List?> fusionnerCalqueIsolate(Map<String, dynamic> params) async {
+    try {
+      Uint8List fondBytes = params['fondBytes'];
+      Uint8List calquePngBytes = params['calquePngBytes'];
+      
+      cv.Mat bg = cv.imdecode(fondBytes, cv.IMREAD_COLOR);
+      cv.Mat overlay = cv.imdecode(calquePngBytes, cv.IMREAD_UNCHANGED); // Conserve le canal Alpha
+      
+      // 1. Extraction sécurisée du BGR et du canal Alpha
+      cv.Mat overlayBgr = cv.cvtColor(overlay, cv.COLOR_BGRA2BGR);
+      var channels = cv.split(overlay);
+      cv.Mat alpha = channels[3];
+      
+      // 2. Normalisation de l'Alpha sur les 3 canaux
+      cv.Mat alpha3c8u = cv.cvtColor(alpha, cv.COLOR_GRAY2BGR);
+      cv.Mat alpha3cF = alpha3c8u.convertTo(cv.MatType.CV_32FC3, alpha: 1.0 / 255.0);
+      
+      // 3. Inversion de l'Alpha (pour creuser le trou dans l'image de fond)
+      cv.Mat invAlpha3c8u = cv.bitwiseNOT(alpha3c8u);
+      cv.Mat invAlpha3cF = invAlpha3c8u.convertTo(cv.MatType.CV_32FC3, alpha: 1.0 / 255.0);
+      
+      // 4. Blending mathématique
+      cv.Mat bgF = bg.convertTo(cv.MatType.CV_32FC3);
+      cv.Mat fgF = overlayBgr.convertTo(cv.MatType.CV_32FC3);
+      
+      cv.Mat bgBlended = cv.multiply(bgF, invAlpha3cF);
+      cv.Mat fgBlended = cv.multiply(fgF, alpha3cF);
+      
+      cv.Mat resultF = cv.add(bgBlended, fgBlended);
+      cv.Mat result8u = resultF.convertTo(cv.MatType.CV_8UC3);
+      
+      var encodeResult = cv.imencode('.jpg', result8u);
+      return encodeResult.$2;
+    } catch (e) {
+      print("[OpenCV] Erreur lors de la fusion du calque : $e");
+      return null;
+    }
   }
 
   /// Isolate pour incruster la goulotte sur l'image.
@@ -95,15 +135,15 @@ class TraitementImage {
       cv.Rect cropRect = cv.Rect(0, 0, 0, 0);
 
       // =========================================================================
-      // === PHASE 1 : EFFACEMENT DU DEFAUT (LAMA INPAINTING ou CLONE STAMP) =====
+      // === PHASE 1 : EFFACEMENT DU DEFAUT (LAMA INPAINTING OU CLONE STAMP) ===
       // =========================================================================
 
-      // TENTATIVE AVEC IA (LaMa)
+      // TENTATIVE AVEC IA (LAMA)
       if (lamaBytes != null) {
         try {
           print("[IA Inpainting] Démarrage de l'analyse LaMa...");
           
-          // Élargit la zone de recadrage autour de l'autocollant pour donner plus de contexte à l'IA LaMa,
+          // Elargit la zone de recadrage autour de l'autocollant pour donner plus de contexte à l'IA LaMa,
           // ce qui améliore la reconstruction des motifs complexes (briques, etc.).
           int cropS = (math.max(rect.width, rect.height) * 2.5).toInt();
           int cropX = (rect.x + rect.width / 2 - cropS / 2).toInt();
@@ -121,7 +161,7 @@ class TraitementImage {
           cv.Mat cropImg = murMat.region(cropRect).clone(); 
           cv.Mat cropMaskLama = maskLama.region(cropRect);
 
-          // PRÉ-TRAITEMENT POUR LAMA : Remplit la zone de l'autocollant avec la couleur moyenne du mur environnant.
+          // PRE-TRAITEMENT POUR LAMA : Remplit la zone de l'autocollant avec la couleur moyenne du mur environnant.
           // Cette astuce aide l'IA à mieux raccorder les motifs (briques, rayures) en évitant les bavures
           // que pourrait causer un remplissage avec l'algorithme Telea.
           cv.Mat invCropMask = cv.bitwiseNOT(cropMaskLama);
@@ -137,9 +177,9 @@ class TraitementImage {
           Uint8List rgbBytes = imgRGB.data;
           Uint8List maskBytes = mask512.data;
 
-          // Préparation des tenseurs pour TFLite
-          var inputImg = List.generate(1, (i) => List.generate(512, (j) => List.generate(512, (k) => Float32List(3))));
-          var inputMask = List.generate(1, (i) => List.generate(512, (j) => List.generate(512, (k) => Float32List(1))));
+          // Préparation des tenseurs pour TFLite : Remis en listes standards au lieu de Float32List pour éviter les crashs de mapping
+          var inputImg = List.generate(1, (i) => List.generate(512, (j) => List.generate(512, (k) => List.generate(3, (l) => 0.0))));
+          var inputMask = List.generate(1, (i) => List.generate(512, (j) => List.generate(512, (k) => List.generate(1, (l) => 0.0))));
           
           int idx = 0;
           for (int y = 0; y < 512; y++) {
@@ -158,7 +198,7 @@ class TraitementImage {
           
           var tensor0 = interpreter.getInputTensor(0);
           List<Object> inputs = (tensor0.shape.last == 3) ? [inputImg, inputMask] : [inputMask, inputImg];
-          var outputImg = List.generate(1, (i) => List.generate(512, (j) => List.generate(512, (k) => Float32List(3))));
+          var outputImg = List.generate(1, (i) => List.generate(512, (j) => List.generate(512, (k) => List.generate(3, (l) => 0.0))));
           
           interpreter.runForMultipleInputs(inputs, {0: outputImg});
 
@@ -203,11 +243,11 @@ class TraitementImage {
           print("[IA Inpainting] LaMa a rebouché le trou avec succès !");
           
         } catch (e) {
-          print("[IA Inpainting] Échec de LaMa, passage au Tampon OpenCV : $e");
+          print("[IA Inpainting] Echec de LaMa, passage au Tampon OpenCV : $e");
         }
       }
 
-      // MÉTHODE DE SECOURS (CLONAGE SIMPLE) : Si l'inpainting avec LaMa échoue,
+      // METHODE DE SECOURS (CLONAGE SIMPLE) : Si l'inpainting avec LaMa échoue,
       // on utilise une méthode de clonage simple (copier/coller d'une zone voisine).
       if (!inpaintingReussi) {
         int padding = 20;
@@ -280,8 +320,9 @@ class TraitementImage {
     }
   }
 
-  /// Incruste la climatisation sur le mur en gérant la perspective, l'ombre et la lumière.
-  static Future<Uint8List?> incrusterClimatisation({
+  /// NOUVEAU : Calcule la clim, ses couleurs et ses ombres portées et renvoie le tout 
+  /// sous forme d'image PNG TRANSPARENTE prête à être superposée n'importe où !
+  static Future<Uint8List?> genererCalqueClimatisation({
     required Uint8List fondPropreBytes, 
     required Uint8List climBytes,
     required List<Map<String, double>> pointsIA,
@@ -293,25 +334,22 @@ class TraitementImage {
     required double largeurMm,
   }) async {
     try {
-      // Décode l'image du mur déjà nettoyée. On évite de refaire l'inpainting à chaque frame.
+      // Décode l'image du mur nettoyé pour récupérer la texture et la couleur de la pièce
       cv.Mat murMat = cv.imdecode(fondPropreBytes, cv.IMREAD_COLOR);
       int wMur = murMat.cols;
       int hMur = murMat.rows;
 
-      // Calcule les ratios pour redimensionner les points de l'IA.
       double ratioX = wMur / 1024.0;
       double ratioY = hMur / 1024.0;
 
-      // Convertit les points de l'IA en points OpenCV.
       List<cv.Point> ptsOri = pointsIA.map((pt) {
         return cv.Point((pt['x']! * ratioX).toInt(), (pt['y']! * ratioY).toInt());
       }).toList();
 
-      // On utilise directement le mur réparé comme base de travail
       cv.Mat resultImg = murMat.clone(); 
 
       // =========================================================================
-      // === PHASE PRÉ-CALCUL : OPTIMISATION DES ASSETS AVANT TRAITEMENT =======
+      // === PHASE PRE-CALCUL : OPTIMISATION DES ASSETS AVANT TRAITEMENT ===
       // =========================================================================
       cv.Mat climMat = cv.imdecode(climBytes, cv.IMREAD_UNCHANGED);
       
@@ -328,8 +366,6 @@ class TraitementImage {
       // =========================================================================
       // === PHASE 2 : CALCUL DE LA PERSPECTIVE STABILISEE ===
       // =========================================================================
-      // Calcule une perspective 2D stable à partir des points de l'autocollant,
-      // en ignorant les légères distorsions pour créer un rectangle parfait.
       cv.Point ptHg = ptsOri[0];
       cv.Point ptHd = ptsOri[1];
       double dx = (ptHd.x - ptHg.x).toDouble();
@@ -355,11 +391,8 @@ class TraitementImage {
       ];
 
       // =========================================================================
-      // === PHASE 3 : TAILLE RÉELLE ET DÉFORMATION 3D ===
+      // === PHASE 3 : TAILLE REELLE ET DEFORMATION 3D ===
       // =========================================================================
-      
-      // Calcule la taille en pixels de l'autocollant sur l'image de la climatisation
-      // en se basant sur les dimensions réelles (en mm) fournies.
       double hClimMm = hauteurMm;
       double wClimMm = largeurMm; 
       int wImgClim = climMat.cols;
@@ -383,11 +416,7 @@ class TraitementImage {
       var channels = cv.split(climWarped);
       cv.Mat alphaMaskOriginale = channels[3]; 
 
-      // CORRECTION DE LA TRANSPARENCE : Le masque alpha est rendu binaire pour s'assurer que le centre de la clim
-      // est 100% opaque et que la texture du mur ne "transparaisse" pas à travers.
       cv.Mat alphaBinaire = cv.threshold(alphaMaskOriginale, 127, 255, cv.THRESH_BINARY).$2;
-
-      // Applique une légère érosion et un flou sur le masque pour éviter les halos blancs sur les bords.
       cv.Mat kernelErode = cv.Mat.ones(3, 3, cv.MatType.CV_8UC1);
       cv.Mat alphaErode = cv.erode(alphaBinaire, kernelErode);
       cv.Mat alphaMask = cv.gaussianBlur(alphaErode, (3, 3), 0.0);
@@ -396,18 +425,22 @@ class TraitementImage {
       cv.Mat maskBinaire = cv.threshold(alphaMask, 5, 255, cv.THRESH_BINARY).$2;
 
       // =========================================================================
-      // === PHASE 4 : CALCUL DE LA DIRECTION DE LA LUMIÈRE & OMBRE PROGRESSIVE ===
+      // === PHASE 4 : CALCUL DE LA DIRECTION DE LA LUMIERE ET OMBRE PROGRESSIVE ===
       // =========================================================================
-      // VARIABLES DE RÉGLAGES DES OMBRES
-      final double reglageOmbreDirBase = 0.12; // Opacité de base de l'ombre longue/directionnelle
-      final double reglageOmbreContact = 0.25;  // Opacité de l'ombre de contact juste sous la clim
-
-      // Détecte la direction de la lumière principale sur le mur en analysant les gradients (Sobel).
       cv.Mat grayMur = cv.cvtColor(resultImg, cv.COLOR_BGR2GRAY);
       
       int downscaleSobel = 32;
       cv.Mat grayMurSmall = cv.resize(grayMur, (wMur ~/ downscaleSobel, hMur ~/ downscaleSobel));
       cv.Mat maskBinaireSmall = cv.resize(maskBinaire, (wMur ~/ downscaleSobel, hMur ~/ downscaleSobel));
+
+      var meanStdDev = cv.meanStdDev(grayMurSmall);
+      double lumiereMoyenneMur = meanStdDev.$1.val[0];
+      double ecartTypeMur = meanStdDev.$2.val[0]; 
+
+      double ratioContraste = (ecartTypeMur / 50.0).clamp(0.2, 1.2); 
+
+      final double reglageOmbreDirBase = 0.12 * ratioContraste; 
+      final double reglageOmbreContact = 0.25 * ratioContraste;  
 
       cv.Mat grayMurFlou = cv.gaussianBlur(grayMurSmall, (7, 7), 0.0);
       cv.Mat sobelX = cv.sobel(grayMurFlou, cv.MatType.CV_32F, 1, 0, ksize: 3);
@@ -425,24 +458,24 @@ class TraitementImage {
       double ratioVolume = profondeurMm / 100.0; 
       double forceOmbre = 12.0 * ratioVolume; 
       
-      double shiftX = norme < 1.0 ? (3.0 * ratioVolume) : -dirLumiereX * forceOmbre;
-      double shiftY = norme < 1.0 ? (8.0 * ratioVolume) : -dirLumiereY * forceOmbre;
+      double longueurOmbre = forceOmbre * ratioContraste;
+
+      double shiftX = norme < 1.0 ? (3.0 * ratioVolume) : -dirLumiereX * longueurOmbre;
+      double shiftY = norme < 1.0 ? (8.0 * ratioVolume) : -dirLumiereY * longueurOmbre;
 
       var srcPts = cv.VecPoint.fromList([cv.Point(0, 0), cv.Point(10, 0), cv.Point(0, 10)]);
       
-      // Crée une ombre portée directionnelle, décalée dans la direction opposée à la lumière.
       var dstPtsDir = cv.VecPoint.fromList([cv.Point(shiftX.toInt(), shiftY.toInt()), cv.Point(10 + shiftX.toInt(), shiftY.toInt()), cv.Point(shiftX.toInt(), 10 + shiftY.toInt())]);
       cv.Mat affineMatDir = cv.getAffineTransform(srcPts, dstPtsDir);
       cv.Mat alphaOmbre = cv.warpAffine(alphaMask, affineMatDir, (wMur, hMur));
       
       cv.Mat smallAlpha = cv.resize(alphaOmbre, (wMur ~/ 4, hMur ~/ 4));
-      int baseBlur = (5 + (ratioVolume * 4)).toInt();
+      int baseBlur = (5 + (ratioVolume * 4) + ((1.0 - ratioContraste) * 8)).toInt();
       if (baseBlur % 2 == 0) baseBlur += 1; 
       
       cv.Mat smallOmbreFloue = cv.gaussianBlur(smallAlpha, (baseBlur, baseBlur), 0.0);
       cv.Mat ombreFloueDirectionnelle = cv.resize(smallOmbreFloue, (wMur, hMur), interpolation: cv.INTER_CUBIC);
 
-      // Crée une ombre de contact plus douce et plus proche pour simuler l'occlusion ambiante.
       var dstPtsContact = cv.VecPoint.fromList([cv.Point(0, 3), cv.Point(10, 3), cv.Point(0, 13)]);
       cv.Mat affineMatContact = cv.getAffineTransform(srcPts, dstPtsContact);
       cv.Mat alphaContact = cv.warpAffine(alphaMask, affineMatContact, (wMur, hMur));
@@ -451,57 +484,34 @@ class TraitementImage {
       cv.Mat smallContactFlou = cv.gaussianBlur(smallContact, (3, 3), 0.0);
       cv.Mat ombreFloueContact = cv.resize(smallContactFlou, (wMur, hMur), interpolation: cv.INTER_CUBIC);
 
-      cv.Scalar lumMurGlobal = cv.mean(grayMurSmall);
+      cv.Mat ombreDir8u = ombreFloueDirectionnelle.convertTo(cv.MatType.CV_8UC1, alpha: reglageOmbreDirBase);
+      cv.Mat ombreContact8u = ombreFloueContact.convertTo(cv.MatType.CV_8UC1, alpha: reglageOmbreContact);
       
-      // Combine les deux ombres et les applique sur le mur.
-      double intensiteDir = reglageOmbreDirBase + (lumMurGlobal.val[0] / 255.0) * 0.30;
-      double intensiteContact = reglageOmbreContact; 
-
-      cv.Mat ombreDir8u = ombreFloueDirectionnelle.convertTo(cv.MatType.CV_8UC1, alpha: intensiteDir);
-      cv.Mat ombreContact8u = ombreFloueContact.convertTo(cv.MatType.CV_8UC1, alpha: intensiteContact);
-      
+      // Masque d'ombre pure (0 = pas d'ombre, >0 = ombre)
       cv.Mat ombreTotale = cv.add(ombreDir8u, ombreContact8u);
-      cv.Mat invOmbre8u = cv.bitwiseNOT(ombreTotale);
-      cv.Mat invOmbre3c = cv.cvtColor(invOmbre8u, cv.COLOR_GRAY2BGR);
-      
-      cv.Mat invOmbreF = invOmbre3c.convertTo(cv.MatType.CV_32FC3, alpha: 1.0 / 255.0);
-      cv.Mat resultImgForShadow = resultImg.convertTo(cv.MatType.CV_32FC3);
-      cv.Mat murOmbreF = cv.multiply(resultImgForShadow, invOmbreF);
-      
-      cv.Mat murOmbre = murOmbreF.convertTo(cv.MatType.CV_8UC3);
 
       // =========================================================================
-      // === PHASE 5 : LUMIÈRE ET TEMPÉRATURE DE COULEUR INTELLIGENTE ===
+      // === PHASE 5 : LUMIERE ET TEMPERATURE DE COULEUR INTELLIGENTE ===
       // =========================================================================
-      
-      // VARIABLES DE RÉGLAGES DE LA COULEUR ET LUMINOSITÉ
-      final double reglageMixAmbiancePiece = 0.65; // Teinte prise sur l'ambiance de la pièce
-      final double reglageMixCouleurMur = 0.35;    // Teinte prise sur la couleur du mur juste derrière
-      
-      final double reglageTeinteClimBlanche = 0.30; // Capacité du plastique blanc à absorber la teinte (miroir)
-      final double reglageTeinteClimNoire = 0.08;   // Capacité du plastique noir à absorber la teinte
+      final double reglageMixAmbiancePiece = 0.65;
+      final double reglageMixCouleurMur = 0.35;    
+      final double reglageTeinteClimBlanche = 0.30;
+      final double reglageTeinteClimNoire = 0.08;   
       
       final double reglageInfluenceOmbreSurBlanc = 0.65;
+      final double reglageInfluenceOmbreSurNoir = 0.21;  
       
-      // POUR RÉGLER LA NOIRCEUR : Joue avec ces deux variables
-      // 1. Influence du mur : Plus c'est haut (ex: 0.25), plus un mur clair va "laver" ou éclaircir la clim noire.
-      final double reglageInfluenceOmbreSurNoir = 0.21;  // Modifiable (Était 0.15)
-      
-      final double reglageLuminositeClimBlanche = 1.0; 
-      
-      // Luminosité de base : C'est le réglage principal pour la noirceur !
-      // 0.70 = très sombre, 0.80 = moyen, 0.90 = gris foncé.
-      final double reglageLuminositeClimNoire = 0.78;   // Modifiable (Était 0.70)
+      double ratioLuminositeAmbiante = (lumiereMoyenneMur / 128.0).clamp(0.7, 1.15);
+      final double reglageLuminositeClimBlanche = 1.15 * ratioLuminositeAmbiante; 
+      final double reglageLuminositeClimNoire = 0.78;   
 
       cv.Mat murUltraSmall = cv.resize(resultImg, (wMur ~/ 32, hMur ~/ 32), interpolation: cv.INTER_AREA);
       cv.Mat murUltraFlou = cv.gaussianBlur(murUltraSmall, (15, 15), 0.0);
       cv.Mat murLisse = cv.resize(murUltraFlou, (wMur, hMur), interpolation: cv.INTER_CUBIC);
 
-      // Calcule la couleur et la luminosité ambiante de la pièce et du mur sous la clim.
       cv.Scalar meanMurGlobal = cv.mean(murLisse);
       cv.Scalar meanMurSousClim = cv.mean(murLisse, mask: maskBinaire);
 
-      // Applique une teinte à la climatisation pour qu'elle s'intègre mieux à l'ambiance colorée de la pièce.
       double bMur = (meanMurGlobal.val[0] * reglageMixAmbiancePiece) + (meanMurSousClim.val[0] * reglageMixCouleurMur);
       double gMur = (meanMurGlobal.val[1] * reglageMixAmbiancePiece) + (meanMurSousClim.val[1] * reglageMixCouleurMur);
       double rMur = (meanMurGlobal.val[2] * reglageMixAmbiancePiece) + (meanMurSousClim.val[2] * reglageMixCouleurMur);
@@ -527,7 +537,6 @@ class TraitementImage {
       cv.Mat climTintedF = cv.multiply(climF, tintMat);
       cv.Mat climTinted = climTintedF.convertTo(cv.MatType.CV_8UC3);
 
-      // Ajuste la luminosité de la climatisation en fonction de la luminosité du mur derrière elle.
       cv.Mat climHsv = cv.cvtColor(climTinted, cv.COLOR_BGR2HSV);
       var hsvChannels = cv.split(climHsv);
       
@@ -537,32 +546,24 @@ class TraitementImage {
       cv.Scalar meanClimV = cv.mean(hsvChannels[2], mask: maskBinaire);
       double lumaClimNativeHSV = math.max(meanClimV.val[0], 1.0);
 
-      // CORRECTION POUR CLIM NOIRE : Empêche une clim noire de devenir grise sur un mur très clair
-      // en limitant l'influence de la luminosité du mur.
       double denominateurLuma = estClimNoire ? math.max(lumaClimNativeHSV, 130.0) : lumaClimNativeHSV;
 
-      // Le "Ratio Magique" : compare la luminosité du mur à celle de la clim pour ajuster l'exposition.
       cv.Mat ratioMap = grayLisseF.convertTo(cv.MatType.CV_32FC1, alpha: 1.0 / denominateurLuma);
       cv.Mat matriceUn = cv.Mat.zeros(hMur, wMur, cv.MatType.CV_32FC1)..setTo(cv.Scalar.all(1.0));
       
-      // Influence dynamique basée sur nos réglages
       double influenceMur = estClimNoire ? reglageInfluenceOmbreSurNoir : reglageInfluenceOmbreSurBlanc; 
-      double influenceClim = 1.0 - influenceMur; // C'est la balance opposée mathématique
+      double influenceClim = 1.0 - influenceMur;
       
       cv.Mat ratioSecurise = cv.addWeighted(ratioMap, influenceMur, matriceUn, influenceClim, 0.0);
       cv.Mat vChannelF = hsvChannels[2].convertTo(cv.MatType.CV_32FC1);
       cv.Mat vShadowedF = cv.multiply(vChannelF, ratioSecurise);
 
-      // Application de l'alpha (luminosité) selon nos nouveaux réglages
       if (estClimNoire) {
          vShadowedF = vShadowedF.convertTo(cv.MatType.CV_32FC1, alpha: reglageLuminositeClimNoire);
       } else {
          vShadowedF = vShadowedF.convertTo(cv.MatType.CV_32FC1, alpha: reglageLuminositeClimBlanche); 
       }
 
-      // CORRECTION DU CONTRE-JOUR : Simule un "voile atmosphérique" en se basant sur le contraste local du mur.
-      // Cela évite que la clim ne devienne trop sombre ou "brûlée" dans des conditions de forte luminosité
-      // (ex: mur blanc à côté d'une fenêtre).
       cv.Rect rectClim = cv.boundingRect(cv.VecPoint.fromList(ptsDstLisses));
       int rx = math.max(0, rectClim.x - 20);
       int ry = math.max(0, rectClim.y - 20);
@@ -577,26 +578,22 @@ class TraitementImage {
         double minLocal = minMaxRoi.$1;
         double maxLocal = minMaxRoi.$2;
         
-        // Calcul d'un proxy pour l'écart-type (contraste local)
         double contrasteLocal = math.max(0.0, maxLocal - minLocal);
         
-        // Plus le contraste est élevé, plus le risque de contre-jour vif est fort.
+        double forceLevelLift = (ecartTypeMur / 40.0).clamp(0.3, 1.0);
         voileAtmospherique = (contrasteLocal * 0.15); 
         
-        // Sécurité stricte : On bride sévèrement le voile sur les machines noires
-        // pour qu'elles restent noires, même sur un mur très contrasté.
         if (estClimNoire) {
-           voileAtmospherique = math.min(voileAtmospherique, 8.0); // Plafond très bas pour le noir
+           voileAtmospherique = math.min(voileAtmospherique, 8.0); 
         } else {
-           voileAtmospherique = math.min(voileAtmospherique, 25.0); // Plafond plus permissif pour le blanc
+           voileAtmospherique = math.min(voileAtmospherique, 25.0); 
         }
+        voileAtmospherique *= forceLevelLift;
       }
 
-      // On compense le contre-jour (Level Lift) de façon sécurisée
       double ratioLift = (255.0 - voileAtmospherique) / 255.0;
       cv.Mat vLiftedF = cv.addWeighted(vShadowedF, ratioLift, vShadowedF, 0.0, voileAtmospherique);
 
-      // Empêche les pixels de la clim de devenir blancs purs (surexposition).
       cv.Mat vCappedF = cv.threshold(vLiftedF, 245.0, 245.0, cv.THRESH_TRUNC).$2;
       hsvChannels[2] = vCappedF.convertTo(cv.MatType.CV_8UC1);
 
@@ -604,42 +601,45 @@ class TraitementImage {
       cv.Mat climRgbFinalPropre = cv.cvtColor(climHsvFinal, cv.COLOR_HSV2BGR);
 
       // =========================================================================
-      // === PHASE 5.5 : DÉGRADATION RÉALISTE (CAPTEUR PHOTO) ===
+      // === PHASE 5.5 : DEGRADATION REALISTE (CAPTEUR PHOTO) ===
       // =========================================================================
-      
-      // Applique un très léger flou pour casser l'aspect "image de synthèse" trop net.
       cv.Mat climBrouillee = cv.gaussianBlur(climRgbFinalPropre, (3, 3), 0.6);
 
-      // Ajoute un bruit numérique (grain) pour que la clim corresponde à la texture de la photo d'origine.
       cv.Mat climFloat = climBrouillee.convertTo(cv.MatType.CV_32FC3);
       cv.Mat noise = cv.Mat.zeros(hMur, wMur, cv.MatType.CV_32FC3);
       
-      // Génère un bruit gaussien aléatoire simulant l'ISO du téléphone
       cv.randn(noise, cv.Scalar.all(0.0), cv.Scalar.all(8.0)); 
       cv.Mat climNoisyFloat = cv.add(climFloat, noise);
       
       cv.Mat climRgbFinal = climNoisyFloat.convertTo(cv.MatType.CV_8UC3);
 
       // =========================================================================
-      // === PHASE 6 : FUSION ALPHA BLENDING ===
+      // === PHASE 6 : CREATION DU CALQUE PNG TRANSPARENT (SECURISE) ===
       // =========================================================================
-      // Fusionne la climatisation (avec ses effets de lumière) et le mur (avec son ombre) en utilisant le masque alpha.
-      cv.Mat alpha3_8u = cv.cvtColor(alphaMask, cv.COLOR_GRAY2BGR);
-      cv.Mat invAlpha3_8u = cv.bitwiseNOT(alpha3_8u);
+      // On combine l'Alpha de la Clim avec l'intensité de l'Ombre pour créer 
+      // un PNG transparent autonome qu'on mettra en cache pour accélérer la Goulotte.
+      
+      cv.Mat alphaMaskF = alphaMask.convertTo(cv.MatType.CV_32FC1, alpha: 1.0 / 255.0);
+      cv.Mat ombreF = ombreTotale.convertTo(cv.MatType.CV_32FC1, alpha: 1.0 / 255.0);
+      
+      // Sécurité : On utilise cv.Mat.zeros et setTo pour avoir un fond 1.0 parfait.
+      cv.Mat matriceUnAlpha = cv.Mat.zeros(hMur, wMur, cv.MatType.CV_32FC1)..setTo(cv.Scalar.all(1.0));
+      cv.Mat invAlphaMaskF = cv.subtract(matriceUnAlpha, alphaMaskF);
+      cv.Mat shadowAlphaF = cv.multiply(invAlphaMaskF, ombreF);
+      cv.Mat finalAlphaF = cv.add(alphaMaskF, shadowAlphaF);
+      
+      cv.Mat finalAlpha8u = finalAlphaF.convertTo(cv.MatType.CV_8UC1, alpha: 255.0);
 
-      cv.Mat alphaF = alpha3_8u.convertTo(cv.MatType.CV_32FC3, alpha: 1.0 / 255.0);
-      cv.Mat invAlphaF = invAlpha3_8u.convertTo(cv.MatType.CV_32FC3, alpha: 1.0 / 255.0);
+      cv.Mat bgrFinal = cv.Mat.zeros(hMur, wMur, cv.MatType.CV_8UC3);
+      climRgbFinal.copyTo(bgrFinal, mask: alphaMask);
 
-      cv.Mat fgF = climRgbFinal.convertTo(cv.MatType.CV_32FC3);
-      cv.Mat bgF = murOmbre.convertTo(cv.MatType.CV_32FC3);
+      // Sécurité ultime pour le canal Alpha sans utiliser d'array dynamique (qui crashait)
+      cv.Mat bgraFinal = cv.cvtColor(bgrFinal, cv.COLOR_BGR2BGRA);
+      var bgraChannels = cv.split(bgraFinal);
+      bgraChannels[3] = finalAlpha8u; // Remplacement direct du canal Alpha
+      cv.Mat finalImage = cv.merge(bgraChannels);
 
-      cv.Mat fgBlended = cv.multiply(fgF, alphaF);
-      cv.Mat bgBlended = cv.multiply(bgF, invAlphaF);
-
-      cv.Mat resultF = cv.add(fgBlended, bgBlended);
-      cv.Mat resultatFinal = resultF.convertTo(cv.MatType.CV_8UC3);
-
-      var encodeResult = cv.imencode('.jpg', resultatFinal);
+      var encodeResult = cv.imencode('.png', finalImage);
       return encodeResult.$2;
       
     } catch (e) {
@@ -677,10 +677,10 @@ class TraitementImage {
   }
 
   // =========================================================================
-  // === INCRUSTATION RÉALISTE DE LA GOULOTTE ===
+  // === INCRUSTATION REALISTE DE LA GOULOTTE ===
   // =========================================================================
   static Future<Uint8List?> incrusterGoulotte({
-    required Uint8List imageAvecClimBytes,
+    required Uint8List imageAvecClimBytes, // Sera toujours le Mur Propre désormais
     required double ptDepartX,
     required double ptDepartY,
     required double ptArriveeX,
@@ -688,7 +688,6 @@ class TraitementImage {
     required double largeurPx,
   }) async {
     try {
-      // Décode l'image de fond (celle où la clim est déjà incrustée)
       cv.Mat fondMat = cv.imdecode(imageAvecClimBytes, cv.IMREAD_COLOR);
       int w = fondMat.cols;
       int h = fondMat.rows;
@@ -722,10 +721,9 @@ class TraitementImage {
         ptRight = cv.Point((bottomPt.x + nxCap * htCap).toInt(), (bottomPt.y + nyCap * htCap).toInt());
 
         // Calcule la perspective du bouchon qui semble s'enfoncer dans le mur.
-        // L'extrusion se fait vers le bas pour simuler un angle de vue de face.
-        double depthExtrusion = largeurPx * 0.20; // Le bouchon recule de 20% de la largeur de la goulotte
-        double ex = 0.0; // Pas de décalage à droite/gauche
-        double ey = depthExtrusion; // Décalage uniquement vers le bas
+        double depthExtrusion = largeurPx * 0.20; 
+        double ex = 0.0; 
+        double ey = depthExtrusion; 
 
         // Effet de rétrécissement pour simuler la perspective lointaine (le mur)
         double shrinkFactor = 0.85; 
@@ -742,43 +740,70 @@ class TraitementImage {
         cv.fillPoly(maskBinaire, cv.VecVecPoint.fromList([[ptLeft, ptRight, ptRightMur, ptLeftMur]]), cv.Scalar.all(255), lineType: cv.LINE_AA);
       }
 
-      // 2. Construit l'apparence visuelle de la goulotte en superposant plusieurs lignes de couleurs différentes
-      // pour simuler un effet de cylindre 3D avec des reflets.
+      // 2. Construit l'apparence visuelle de la goulotte
       cv.Mat goulotteBgr = cv.Mat.zeros(h, w, cv.MatType.CV_8UC3);
-      
-      // Couche de fond (Les bords sombres du plastique qui fuient vers le mur)
       _tracerLigneRectangulaire(goulotteBgr, p1, p2, cv.Scalar(210, 210, 210, 0), largeurPx);
-      // Couche principale (Gris clair plastique)
       _tracerLigneRectangulaire(goulotteBgr, p1, p2, cv.Scalar(240, 245, 245, 0), largeurPx * 0.85);
-      // Lumière diffuse sur le dessus
       _tracerLigneRectangulaire(goulotteBgr, p1, p2, cv.Scalar(245, 250, 250, 0), largeurPx * 0.50);
-      // Reflet spéculaire (Ligne de lumière très fine pour le côté lisse/brillant)
       _tracerLigneRectangulaire(goulotteBgr, p1, p2, cv.Scalar(255, 255, 255, 0), largeurPx * 0.15);
       
-      // Un léger flou fond les couches pour créer un dégradé cylindrique réaliste.
       cv.Mat goulotteBgrSmooth = cv.gaussianBlur(goulotteBgr, (5, 5), 0.0);
 
-      // Dessine la face inférieure du "bouchon" pour donner un effet de volume.
       if (lenCap >= 1.0) {
-        // On dessine la face inférieure (qui s'enfonce vers le mur) APRES le flou pour garder des arêtes nettes type moulage plastique
-        // La couleur est plus sombre car c'est une zone d'ombre propre (face orientée vers le bas)
         cv.fillPoly(goulotteBgrSmooth, cv.VecVecPoint.fromList([[ptLeft, ptRight, ptRightMur, ptLeftMur]]), cv.Scalar(160, 165, 165, 0), lineType: cv.LINE_AA);
-        
-        // Ligne d'arête pour marquer nettement le volume et la cassure 3D
         int edgeThickness = math.max(1, (largeurPx * 0.05).toInt());
         cv.line(goulotteBgrSmooth, ptLeft, ptRight, cv.Scalar(190, 195, 195, 0), thickness: edgeThickness, lineType: cv.LINE_AA);
       }
 
       // 3. Création de l'ombre portée de la goulotte (Drop Shadow)
+      // Ombre adaptative calculée sur le fond (comme pour la clim)
+      cv.Mat grayFond = cv.cvtColor(fondMat, cv.COLOR_BGR2GRAY);
+      int downscaleSobelG = 32;
+      cv.Mat grayFondSmall = cv.resize(grayFond, (w ~/ downscaleSobelG, h ~/ downscaleSobelG));
+      cv.Mat maskBinaireSmallG = cv.resize(maskBinaire, (w ~/ downscaleSobelG, h ~/ downscaleSobelG));
+
+      var meanStdDevGoulotte = cv.meanStdDev(grayFondSmall);
+      double ecartTypeMurGoulotte = meanStdDevGoulotte.$2.val[0];
+      double ratioContrasteGoulotte = (ecartTypeMurGoulotte / 50.0).clamp(0.2, 1.2);
+
+      cv.Mat grayFondFlou = cv.gaussianBlur(grayFondSmall, (7, 7), 0.0);
+      cv.Mat sobelXG = cv.sobel(grayFondFlou, cv.MatType.CV_32F, 1, 0, ksize: 3);
+      cv.Mat sobelYG = cv.sobel(grayFondFlou, cv.MatType.CV_32F, 0, 1, ksize: 3);
+
+      cv.Scalar meanSobelXG = cv.mean(sobelXG, mask: maskBinaireSmallG);
+      cv.Scalar meanSobelYG = cv.mean(sobelYG, mask: maskBinaireSmallG);
+      double gradXG = meanSobelXG.val[0];
+      double gradYG = meanSobelYG.val[0];
+      double normeG = math.sqrt(gradXG * gradXG + gradYG * gradYG) + 0.0001;
+
+      double dirLumiereXG = gradXG / normeG;
+      double dirLumiereYG = gradYG / normeG;
+
+      double ratioVolumeGoulotte = 40.0 / 100.0; // Goulotte moins profonde que la clim
+      double forceOmbreGoulotte = 12.0 * ratioVolumeGoulotte;
+      double longueurOmbreGoulotte = forceOmbreGoulotte * ratioContrasteGoulotte;
+
+      double shiftXG = normeG < 1.0 ? (3.0 * ratioVolumeGoulotte) : -dirLumiereXG * longueurOmbreGoulotte;
+      double shiftYG = normeG < 1.0 ? (8.0 * ratioVolumeGoulotte) : -dirLumiereYG * longueurOmbreGoulotte;
+
       cv.Mat affineMatDir = cv.getAffineTransform(
         cv.VecPoint.fromList([cv.Point(0, 0), cv.Point(10, 0), cv.Point(0, 10)]),
-        cv.VecPoint.fromList([cv.Point(5, 8), cv.Point(15, 8), cv.Point(5, 18)]) // Force du décalage de l'ombre
+        cv.VecPoint.fromList([
+          cv.Point(shiftXG.toInt(), shiftYG.toInt()), 
+          cv.Point(10 + shiftXG.toInt(), shiftYG.toInt()), 
+          cv.Point(shiftXG.toInt(), 10 + shiftYG.toInt())
+        ]) // Décalage adaptatif de l'ombre
       );
       cv.Mat shadowWarped = cv.warpAffine(maskBinaire, affineMatDir, (w, h));
-      cv.Mat shadowBlurred = cv.gaussianBlur(shadowWarped, (15, 15), 0.0);
+      
+      int baseBlurGoulotte = (5 + (ratioVolumeGoulotte * 4) + ((1.0 - ratioContrasteGoulotte) * 8)).toInt();
+      if (baseBlurGoulotte % 2 == 0) baseBlurGoulotte += 1;
+      
+      cv.Mat shadowBlurred = cv.gaussianBlur(shadowWarped, (baseBlurGoulotte, baseBlurGoulotte), 0.0);
       
       // Assombrissement progressif de l'image de fond
-      cv.Mat ombre8u = shadowBlurred.convertTo(cv.MatType.CV_8UC1, alpha: 0.35); // Opacité de l'ombre
+      double opaciteOmbre = 0.35 * ratioContrasteGoulotte;
+      cv.Mat ombre8u = shadowBlurred.convertTo(cv.MatType.CV_8UC1, alpha: opaciteOmbre); // Opacité de l'ombre adaptative
       cv.Mat invOmbre8u = cv.bitwiseNOT(ombre8u);
       cv.Mat invOmbre3c = cv.cvtColor(invOmbre8u, cv.COLOR_GRAY2BGR);
       cv.Mat invOmbreF = invOmbre3c.convertTo(cv.MatType.CV_32FC3, alpha: 1.0 / 255.0);
@@ -788,9 +813,9 @@ class TraitementImage {
       cv.Mat murOmbre = fondOmbreF.convertTo(cv.MatType.CV_8UC3);
 
       // 4. Teinte et Lumière dynamiques (Même traitement que pour la Clim)
-      // CORRECTION DE LA TRANSPARENCE : Utilise une version très floutée du mur pour l'analyse de la lumière.
-      // Cela évite que la texture du mur (ex: briques) n'apparaisse "à travers" la goulotte.
-      cv.Mat murUltraSmall = cv.resize(murOmbre, (w ~/ 32, h ~/ 32), interpolation: cv.INTER_AREA);
+      // CORRECTION MAJEURE : On utilise 'fondMat' (le mur vierge) et non 'murOmbre' !
+      // Si on utilise 'murOmbre', la goulotte analyse sa PROPRE ombre et s'assombrit elle-même.
+      cv.Mat murUltraSmall = cv.resize(fondMat, (w ~/ 32, h ~/ 32), interpolation: cv.INTER_AREA);
       cv.Mat murUltraFlou = cv.gaussianBlur(murUltraSmall, (15, 15), 0.0);
       cv.Mat murLisse = cv.resize(murUltraFlou, (w, h), interpolation: cv.INTER_CUBIC);
 
@@ -830,7 +855,7 @@ class TraitementImage {
       cv.Mat ratioMap = grayLisseF.convertTo(cv.MatType.CV_32FC1, alpha: 1.0 / lumaGoulotteNative);
       cv.Mat matriceUn = cv.Mat.zeros(h, w, cv.MatType.CV_32FC1)..setTo(cv.Scalar.all(1.0));
       
-      // POUR RÉGLER LA LUMINOSITÉ (Influence du mur)
+      // POUR REGLER LA LUMINOSITE (Influence du mur)
       // Si la goulotte est trop sombre sur un mur foncé, baisse cette variable vers 0.30 ou 0.20
       // pour que la goulotte "ignore" l'obscurité du mur en dessous d'elle.
       double influenceMurGoulotte = 0.43; 
@@ -839,6 +864,14 @@ class TraitementImage {
       cv.Mat vChannelF = hsvChannels[2].convertTo(cv.MatType.CV_32FC1);
       cv.Mat vShadowedF = cv.multiply(vChannelF, ratioSecurise);
 
+      // LUMINOSITE ADAPTATIVE POUR LA GOULOTTE
+      // Comme pour la clim, on adapte l'exposition de la goulotte selon la lumière de la pièce.
+      // Si le mur derrière la goulotte est sombre (ex: à l'ombre, 80/255), on baisse l'intensité lumineuse de la goulotte.
+      double ratioLuminosite = (lumMurLocal / 128.0).clamp(0.65, 1.15);
+      double luminositeGoulotteAdaptive = 1.0 * ratioLuminosite;
+      
+      vShadowedF = vShadowedF.convertTo(cv.MatType.CV_32FC1, alpha: luminositeGoulotteAdaptive);
+
       // Contre-jour (Voile atmosphérique) calqué sur le contraste environnant
       cv.Rect rectGoulotte = cv.boundingRect(cv.VecPoint.fromList([p1, p2]));
       int rx = math.max(0, rectGoulotte.x - 20);
@@ -846,7 +879,7 @@ class TraitementImage {
       int rw = math.min(w - rx, rectGoulotte.width + 40);
       int rh = math.min(h - ry, rectGoulotte.height + 40);
 
-      cv.Mat grayMurTextureBrute = cv.cvtColor(murOmbre, cv.COLOR_BGR2GRAY); // Ici on prend la vraie texture pour le contraste
+      cv.Mat grayMurTextureBrute = cv.cvtColor(fondMat, cv.COLOR_BGR2GRAY); // Ici on prend la vraie texture (sans ombre) pour le contraste
       double voileAtmospherique = 0.0;
       if (rw > 0 && rh > 0) {
         cv.Mat roiMurGray = grayMurTextureBrute.region(cv.Rect(rx, ry, rw, rh));
