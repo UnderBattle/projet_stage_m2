@@ -10,18 +10,23 @@ class IAService {
   factory IAService() => _instance;
   IAService._internal();
 
+  /// Modèle TFLite pour la détection de l'autocollant (YOLOv8).
   Interpreter? yoloModel;
+  /// Modèle TFLite pour l'inpainting (LaMa), conservé en bytes pour être passé aux Isolates.
   Uint8List? lamaBytes;
+  /// Indique si les modèles ont été chargés avec succès.
   bool isInitialized = false;
 
-  /// Charge les modèles TFLite depuis les assets.
+  /// Charge les modèles d'IA (YOLO et LaMa) depuis les assets de l'application.
   Future<void> initModels() async {
-    if (isInitialized) return; // Si c'est déjà chargé, on ne fait rien
+    // Si les modèles sont déjà chargés, on ne fait rien.
+    if (isInitialized) return; 
     
     try {
       print("[IAService] Début du chargement des modèles IA en arrière-plan...");
       final interpreterOptions = InterpreterOptions();
       
+      // Ajoute un delegate pour optimiser les performances selon la plateforme.
       if (Platform.isAndroid) {
         interpreterOptions.addDelegate(XNNPackDelegate()); 
       } else if (Platform.isIOS) {

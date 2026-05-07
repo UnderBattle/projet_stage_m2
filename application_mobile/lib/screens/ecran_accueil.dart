@@ -20,17 +20,17 @@ class _EcranAccueilState extends State<EcranAccueil> {
   CameraController? _controller;
   final ImagePicker _picker = ImagePicker();
   
-  // Indique si une image est en cours de redimensionnement pour afficher l'écran de chargement.
+  /// Indique si une image est en cours de redimensionnement pour afficher l'écran de chargement.
   bool _isOptimizing = false;
   
-  // AJOUT : Indique si les lourds modèles IA sont bien chargés en RAM avant d'autoriser l'action
+  /// Indique si les modèles d'IA sont prêts à être utilisés.
   bool _isIaReady = false;
 
   @override
   void initState() {
     super.initState();
     
-    // On lance le chargement de l'IA en tâche de fond et on surveille quand c'est terminé (AJOUT)
+    // Lance le chargement des modèles d'IA en arrière-plan.
     _preparerIA();
 
     // Initialise le contrôleur avec la première caméra disponible (généralement la caméra arrière) en haute résolution.
@@ -49,7 +49,7 @@ class _EcranAccueilState extends State<EcranAccueil> {
     }
   }
 
-  // AJOUT : Fonction asynchrone pour mettre à jour l'interface une fois l'IA chargée
+  /// Charge les modèles d'IA et met à jour l'état pour activer les boutons.
   Future<void> _preparerIA() async {
     await IAService().initModels();
     if (mounted) {
@@ -72,7 +72,7 @@ class _EcranAccueilState extends State<EcranAccueil> {
       try {
         setState(() => _isOptimizing = true);
         
-        // Si le client a été plus vite que le chargement, on patiente pour sécuriser l'IA
+        // Assure que les modèles d'IA sont initialisés avant de continuer.
         if (!IAService().isInitialized) {
           await IAService().initModels();
         }
@@ -100,7 +100,7 @@ class _EcranAccueilState extends State<EcranAccueil> {
       if (rawImage != null && mounted) {
         setState(() => _isOptimizing = true);
         
-        // Sécurité pour le chargement de l'IA
+        // Assure que les modèles d'IA sont initialisés avant de continuer.
         if (!IAService().isInitialized) {
           await IAService().initModels();
         }
@@ -165,8 +165,7 @@ class _EcranAccueilState extends State<EcranAccueil> {
               ),
               Padding(
                 padding: const EdgeInsets.only(bottom: 40.0, left: 16.0, right: 16.0),
-                // Boutons d'actions pour choisir la source de l'image.
-                // AJOUT : Ajout d'une Column pour pouvoir glisser le texte de chargement de l'IA sous les boutons
+                // Colonne pour afficher les boutons et le message de chargement de l'IA en dessous.
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
@@ -174,7 +173,7 @@ class _EcranAccueilState extends State<EcranAccueil> {
                       mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                       children: [
                         ElevatedButton.icon(
-                          // AJOUT : On désactive visuellement le bouton si l'IA n'est pas prête
+                          // Désactive le bouton si une opération est en cours ou si l'IA n'est pas prête.
                           onPressed: (_isOptimizing || !_isIaReady) ? null : _ouvrirGalerie,
                           icon: const Icon(Icons.photo_library),
                           label: const Text('Galerie'),
@@ -185,7 +184,6 @@ class _EcranAccueilState extends State<EcranAccueil> {
                           ),
                         ),
                         ElevatedButton.icon(
-                          // AJOUT : On désactive visuellement le bouton si l'IA n'est pas prête
                           onPressed: (_isOptimizing || !_isIaReady) ? null : _prendrePhoto,
                           icon: const Icon(Icons.camera_alt),
                           label: const Text('Photo'),
@@ -197,7 +195,7 @@ class _EcranAccueilState extends State<EcranAccueil> {
                         ),
                       ],
                     ),
-                    // AJOUT : Feedback visuel discret pour prévenir que l'IA chauffe
+                    // Affiche un indicateur de chargement pendant que l'IA s'initialise.
                     if (!_isIaReady)
                       const Padding(
                         padding: EdgeInsets.only(top: 15.0),
