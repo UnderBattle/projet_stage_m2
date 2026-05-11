@@ -26,14 +26,14 @@ class CatalogueService {
     'Climatisations': [
       Equipement(
         nom: 'Takao Plus Blanc',
-        chemin: 'assets/installations/climatisation/clim_takao_plus/8e74c5374539-takao-plus-blanc-face-atlantic.png',
+        chemin: 'assets/installations/climatisations/clim_takao_plus/8e74c5374539-takao-plus-blanc-face-atlantic.png',
         profondeur: 240.0,
         hauteur: 270.0, 
         largeur: 798.0,
       ),
       Equipement(
         nom: 'Takao Plus Noir',
-        chemin: 'assets/installations/climatisation/clim_takao_plus/baae79054b9d-takao-plus-noir-face-atlantic.png',
+        chemin: 'assets/installations/climatisations/clim_takao_plus/baae79054b9d-takao-plus-noir-face-atlantic.png',
         profondeur: 240.0,
         hauteur: 270.0,
         largeur: 798.0,
@@ -41,8 +41,8 @@ class CatalogueService {
     ],
     'Unités Extérieures': [
       Equipement(
-        nom: 'Takao Plus Exterieur',
-        chemin: 'assets/installations/unite_exterieur/unite_exterieur_takao_plus/unite_exterieur_takao_plus.png',
+        nom: 'Takao Plus Unité Extérieure',
+        chemin: 'assets/installations/unites_exterieures/unite_exterieure_takao_plus/unite_exterieure_takao_plus.png',
         profondeur: 290.0,
         hauteur: 542.0,
         largeur: 799.0,

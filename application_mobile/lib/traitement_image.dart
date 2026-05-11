@@ -505,7 +505,7 @@ class TraitementImage {
       // pour éviter que l'équipement ou la goulotte ne brille trop sur un mur sans ombre.
       double ratioLuminositeAmbiante = (lumiereMoyenneMur / 128.0).clamp(0.7, 1.0);
       final double reglageLuminositeEquipementBlanc = 0.95 * ratioLuminositeAmbiante; 
-      final double reglageLuminositeEquipementNoir = 0.65;   
+      final double reglageLuminositeEquipementNoir = 0.78;   
 
       cv.Mat murUltraSmall = cv.resize(resultImg, (wMur ~/ 32, hMur ~/ 32), interpolation: cv.INTER_AREA);
       cv.Mat murUltraFlou = cv.gaussianBlur(murUltraSmall, (15, 15), 0.0);
