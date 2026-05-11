@@ -25,7 +25,7 @@ class MonApplication extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Simulateur Clim',
+      title: 'Simulateur d\'Installation', // Titre généralisé
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.teal),

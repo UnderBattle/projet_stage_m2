@@ -16,15 +16,15 @@ class TraitementImage {
     );
   }
 
-  /// NOUVEAU : Isolate pour générer la climatisation sur fond transparent (PNG).
-  static Future<Uint8List?> genererCalqueClimatisationIsolate(Map<String, dynamic> params) async {
-    return await genererCalqueClimatisation(
+  /// NOUVEAU : Isolate pour générer l'équipement sur fond transparent (PNG).
+  static Future<Uint8List?> genererCalqueEquipementIsolate(Map<String, dynamic> params) async {
+    return await genererCalqueEquipement(
       fondPropreBytes: params['fondPropreBytes'] as Uint8List,
-      climBytes: params['climBytes'] as Uint8List,
+      equipementBytes: params['equipementBytes'] as Uint8List,
       pointsIA: (params['pointsIA'] as List).map((e) => Map<String, double>.from(e)).toList(),
       decalageX: params['decalageX'] as double,
       decalageY: params['decalageY'] as double,
-      climAssetPath: params['climAssetPath'] as String,
+      equipementAssetPath: params['equipementAssetPath'] as String,
       profondeurMm: params['profondeurMm'] as double,
       hauteurMm: params['hauteurMm'] as double,
       largeurMm: params['largeurMm'] as double,
@@ -74,7 +74,7 @@ class TraitementImage {
   /// Isolate pour incruster la goulotte sur l'image.
   static Future<Uint8List?> incrusterGoulotteIsolate(Map<String, dynamic> params) async {
     return await incrusterGoulotte(
-      imageAvecClimBytes: params['imageAvecClimBytes'] as Uint8List,
+      imageDeFondBytes: params['imageDeFondBytes'] as Uint8List,
       ptDepartX: params['ptDepartX'] as double,
       ptDepartY: params['ptDepartY'] as double,
       ptArriveeX: params['ptArriveeX'] as double,
@@ -320,15 +320,15 @@ class TraitementImage {
     }
   }
 
-  /// NOUVEAU : Calcule la clim, ses couleurs et ses ombres portées et renvoie le tout 
+  /// NOUVEAU : Calcule l'équipement, ses couleurs et ses ombres portées et renvoie le tout 
   /// sous forme d'image PNG TRANSPARENTE prête à être superposée n'importe où !
-  static Future<Uint8List?> genererCalqueClimatisation({
+  static Future<Uint8List?> genererCalqueEquipement({
     required Uint8List fondPropreBytes, 
-    required Uint8List climBytes,
+    required Uint8List equipementBytes,
     required List<Map<String, double>> pointsIA,
     double decalageX = 0.0,
     double decalageY = 0.0, 
-    required String climAssetPath,
+    required String equipementAssetPath,
     required double profondeurMm, 
     required double hauteurMm,
     required double largeurMm,
@@ -351,17 +351,17 @@ class TraitementImage {
       // =========================================================================
       // === PHASE PRE-CALCUL : OPTIMISATION DES ASSETS AVANT TRAITEMENT ===
       // =========================================================================
-      cv.Mat climMat = cv.imdecode(climBytes, cv.IMREAD_UNCHANGED);
+      cv.Mat equipementMat = cv.imdecode(equipementBytes, cv.IMREAD_UNCHANGED);
       
-      // OPTIMISATION : Détermine si la climatisation est de couleur sombre en analysant l'image source (petite taille)
+      // OPTIMISATION : Détermine si l'équipement est de couleur sombre en analysant l'image source (petite taille)
       // plutôt que l'image déformée (grande taille), ce qui est beaucoup plus rapide.
-      var rawChannels = cv.split(climMat);
+      var rawChannels = cv.split(equipementMat);
       cv.Mat rawAlpha = cv.threshold(rawChannels[3], 10, 255, cv.THRESH_BINARY).$2;
-      cv.Mat rawBgr = cv.cvtColor(climMat, cv.COLOR_BGRA2BGR);
+      cv.Mat rawBgr = cv.cvtColor(equipementMat, cv.COLOR_BGRA2BGR);
       cv.Scalar rawMeanColor = cv.mean(rawBgr, mask: rawAlpha);
       
-      double lumaNativeClim = (0.114 * rawMeanColor.val[0]) + (0.587 * rawMeanColor.val[1]) + (0.299 * rawMeanColor.val[2]);
-      bool estClimNoire = lumaNativeClim < 80.0;
+      double lumaNativeEquipement = (0.114 * rawMeanColor.val[0]) + (0.587 * rawMeanColor.val[1]) + (0.299 * rawMeanColor.val[2]);
+      bool estEquipementNoir = lumaNativeEquipement < 80.0;
 
       // =========================================================================
       // === PHASE 2 : CALCUL DE LA PERSPECTIVE STABILISEE ===
@@ -393,13 +393,13 @@ class TraitementImage {
       // =========================================================================
       // === PHASE 3 : TAILLE REELLE ET DEFORMATION 3D ===
       // =========================================================================
-      double hClimMm = hauteurMm;
-      double wClimMm = largeurMm; 
-      int wImgClim = climMat.cols;
-      int hImgClim = climMat.rows;
+      double hEquipementMm = hauteurMm;
+      double wEquipementMm = largeurMm; 
+      int wImgEquipement = equipementMat.cols;
+      int hImgEquipement = equipementMat.rows;
 
-      double wAutoPx = (wAutoMm / wClimMm) * wImgClim;
-      double hAutoPx = (hAutoMm / hClimMm) * hImgClim;
+      double wAutoPx = (wAutoMm / wEquipementMm) * wImgEquipement;
+      double hAutoPx = (hAutoMm / hEquipementMm) * hImgEquipement;
 
       List<cv.Point> ptsSrc = [
         cv.Point(0, 0),
@@ -411,9 +411,9 @@ class TraitementImage {
       var vecPtsSrc = cv.VecPoint.fromList(ptsSrc);
       var vecPtsDst = cv.VecPoint.fromList(ptsDstLisses);
       cv.Mat hMatrix = cv.getPerspectiveTransform(vecPtsSrc, vecPtsDst);
-      cv.Mat climWarped = cv.warpPerspective(climMat, hMatrix, (wMur, hMur));
+      cv.Mat equipementWarped = cv.warpPerspective(equipementMat, hMatrix, (wMur, hMur));
 
-      var channels = cv.split(climWarped);
+      var channels = cv.split(equipementWarped);
       cv.Mat alphaMaskOriginale = channels[3]; 
 
       cv.Mat alphaBinaire = cv.threshold(alphaMaskOriginale, 127, 255, cv.THRESH_BINARY).$2;
@@ -421,7 +421,7 @@ class TraitementImage {
       cv.Mat alphaErode = cv.erode(alphaBinaire, kernelErode);
       cv.Mat alphaMask = cv.gaussianBlur(alphaErode, (3, 3), 0.0);
       
-      cv.Mat climBgr = cv.cvtColor(climWarped, cv.COLOR_BGRA2BGR);
+      cv.Mat equipementBgr = cv.cvtColor(equipementWarped, cv.COLOR_BGRA2BGR);
       cv.Mat maskBinaire = cv.threshold(alphaMask, 5, 255, cv.THRESH_BINARY).$2;
 
       // =========================================================================
@@ -495,26 +495,28 @@ class TraitementImage {
       // =========================================================================
       final double reglageMixAmbiancePiece = 0.65;
       final double reglageMixCouleurMur = 0.35;    
-      final double reglageTeinteClimBlanche = 0.30;
-      final double reglageTeinteClimNoire = 0.08;   
+      final double reglageTeinteEquipementBlanc = 0.30;
+      final double reglageTeinteEquipementNoir = 0.08;   
       
       final double reglageInfluenceOmbreSurBlanc = 0.65;
       final double reglageInfluenceOmbreSurNoir = 0.21;  
       
-      double ratioLuminositeAmbiante = (lumiereMoyenneMur / 128.0).clamp(0.7, 1.15);
-      final double reglageLuminositeClimBlanche = 1.15 * ratioLuminositeAmbiante; 
-      final double reglageLuminositeClimNoire = 0.78;   
+      // AJUSTEMENT DE L'EBLOUISSEMENT : On baisse le multiplicateur de base et le plafond
+      // pour éviter que l'équipement ou la goulotte ne brille trop sur un mur sans ombre.
+      double ratioLuminositeAmbiante = (lumiereMoyenneMur / 128.0).clamp(0.7, 1.0);
+      final double reglageLuminositeEquipementBlanc = 0.95 * ratioLuminositeAmbiante; 
+      final double reglageLuminositeEquipementNoir = 0.65;   
 
       cv.Mat murUltraSmall = cv.resize(resultImg, (wMur ~/ 32, hMur ~/ 32), interpolation: cv.INTER_AREA);
       cv.Mat murUltraFlou = cv.gaussianBlur(murUltraSmall, (15, 15), 0.0);
       cv.Mat murLisse = cv.resize(murUltraFlou, (wMur, hMur), interpolation: cv.INTER_CUBIC);
 
       cv.Scalar meanMurGlobal = cv.mean(murLisse);
-      cv.Scalar meanMurSousClim = cv.mean(murLisse, mask: maskBinaire);
+      cv.Scalar meanMurSousEquipement = cv.mean(murLisse, mask: maskBinaire);
 
-      double bMur = (meanMurGlobal.val[0] * reglageMixAmbiancePiece) + (meanMurSousClim.val[0] * reglageMixCouleurMur);
-      double gMur = (meanMurGlobal.val[1] * reglageMixAmbiancePiece) + (meanMurSousClim.val[1] * reglageMixCouleurMur);
-      double rMur = (meanMurGlobal.val[2] * reglageMixAmbiancePiece) + (meanMurSousClim.val[2] * reglageMixCouleurMur);
+      double bMur = (meanMurGlobal.val[0] * reglageMixAmbiancePiece) + (meanMurSousEquipement.val[0] * reglageMixCouleurMur);
+      double gMur = (meanMurGlobal.val[1] * reglageMixAmbiancePiece) + (meanMurSousEquipement.val[1] * reglageMixCouleurMur);
+      double rMur = (meanMurGlobal.val[2] * reglageMixAmbiancePiece) + (meanMurSousEquipement.val[2] * reglageMixCouleurMur);
 
       double lumMurLocal = (0.114 * bMur) + (0.587 * gMur) + (0.299 * rMur);
       lumMurLocal = math.max(lumMurLocal, 1.0); 
@@ -523,7 +525,7 @@ class TraitementImage {
       double tintG = gMur / lumMurLocal;
       double tintR = rMur / lumMurLocal;
 
-      double forceTeinte = estClimNoire ? reglageTeinteClimNoire : reglageTeinteClimBlanche; 
+      double forceTeinte = estEquipementNoir ? reglageTeinteEquipementNoir : reglageTeinteEquipementBlanc; 
       tintB = 1.0 + (tintB - 1.0) * forceTeinte;
       tintG = 1.0 + (tintG - 1.0) * forceTeinte;
       tintR = 1.0 + (tintR - 1.0) * forceTeinte;
@@ -533,42 +535,42 @@ class TraitementImage {
       tintR = math.max(0.80, math.min(1.20, tintR));
 
       cv.Mat tintMat = cv.Mat.zeros(hMur, wMur, cv.MatType.CV_32FC3)..setTo(cv.Scalar(tintB, tintG, tintR, 0));
-      cv.Mat climF = climBgr.convertTo(cv.MatType.CV_32FC3);
-      cv.Mat climTintedF = cv.multiply(climF, tintMat);
-      cv.Mat climTinted = climTintedF.convertTo(cv.MatType.CV_8UC3);
+      cv.Mat equipementF = equipementBgr.convertTo(cv.MatType.CV_32FC3);
+      cv.Mat equipementTintedF = cv.multiply(equipementF, tintMat);
+      cv.Mat equipementTinted = equipementTintedF.convertTo(cv.MatType.CV_8UC3);
 
-      cv.Mat climHsv = cv.cvtColor(climTinted, cv.COLOR_BGR2HSV);
-      var hsvChannels = cv.split(climHsv);
+      cv.Mat equipementHsv = cv.cvtColor(equipementTinted, cv.COLOR_BGR2HSV);
+      var hsvChannels = cv.split(equipementHsv);
       
       cv.Mat grayLisse = cv.cvtColor(murLisse, cv.COLOR_BGR2GRAY);
       cv.Mat grayLisseF = grayLisse.convertTo(cv.MatType.CV_32FC1);
 
-      cv.Scalar meanClimV = cv.mean(hsvChannels[2], mask: maskBinaire);
-      double lumaClimNativeHSV = math.max(meanClimV.val[0], 1.0);
+      cv.Scalar meanEquipementV = cv.mean(hsvChannels[2], mask: maskBinaire);
+      double lumaEquipementNativeHSV = math.max(meanEquipementV.val[0], 1.0);
 
-      double denominateurLuma = estClimNoire ? math.max(lumaClimNativeHSV, 130.0) : lumaClimNativeHSV;
+      double denominateurLuma = estEquipementNoir ? math.max(lumaEquipementNativeHSV, 130.0) : lumaEquipementNativeHSV;
 
       cv.Mat ratioMap = grayLisseF.convertTo(cv.MatType.CV_32FC1, alpha: 1.0 / denominateurLuma);
       cv.Mat matriceUn = cv.Mat.zeros(hMur, wMur, cv.MatType.CV_32FC1)..setTo(cv.Scalar.all(1.0));
       
-      double influenceMur = estClimNoire ? reglageInfluenceOmbreSurNoir : reglageInfluenceOmbreSurBlanc; 
-      double influenceClim = 1.0 - influenceMur;
+      double influenceMur = estEquipementNoir ? reglageInfluenceOmbreSurNoir : reglageInfluenceOmbreSurBlanc; 
+      double influenceEquipement = 1.0 - influenceMur;
       
-      cv.Mat ratioSecurise = cv.addWeighted(ratioMap, influenceMur, matriceUn, influenceClim, 0.0);
+      cv.Mat ratioSecurise = cv.addWeighted(ratioMap, influenceMur, matriceUn, influenceEquipement, 0.0);
       cv.Mat vChannelF = hsvChannels[2].convertTo(cv.MatType.CV_32FC1);
       cv.Mat vShadowedF = cv.multiply(vChannelF, ratioSecurise);
 
-      if (estClimNoire) {
-         vShadowedF = vShadowedF.convertTo(cv.MatType.CV_32FC1, alpha: reglageLuminositeClimNoire);
+      if (estEquipementNoir) {
+         vShadowedF = vShadowedF.convertTo(cv.MatType.CV_32FC1, alpha: reglageLuminositeEquipementNoir);
       } else {
-         vShadowedF = vShadowedF.convertTo(cv.MatType.CV_32FC1, alpha: reglageLuminositeClimBlanche); 
+         vShadowedF = vShadowedF.convertTo(cv.MatType.CV_32FC1, alpha: reglageLuminositeEquipementBlanc); 
       }
 
-      cv.Rect rectClim = cv.boundingRect(cv.VecPoint.fromList(ptsDstLisses));
-      int rx = math.max(0, rectClim.x - 20);
-      int ry = math.max(0, rectClim.y - 20);
-      int rw = math.min(wMur - rx, rectClim.width + 40);
-      int rh = math.min(hMur - ry, rectClim.height + 40);
+      cv.Rect rectEquipement = cv.boundingRect(cv.VecPoint.fromList(ptsDstLisses));
+      int rx = math.max(0, rectEquipement.x - 20);
+      int ry = math.max(0, rectEquipement.y - 20);
+      int rw = math.min(wMur - rx, rectEquipement.width + 40);
+      int rh = math.min(hMur - ry, rectEquipement.height + 40);
       
       double voileAtmospherique = 0.0;
       
@@ -583,7 +585,7 @@ class TraitementImage {
         double forceLevelLift = (ecartTypeMur / 40.0).clamp(0.3, 1.0);
         voileAtmospherique = (contrasteLocal * 0.15); 
         
-        if (estClimNoire) {
+        if (estEquipementNoir) {
            voileAtmospherique = math.min(voileAtmospherique, 8.0); 
         } else {
            voileAtmospherique = math.min(voileAtmospherique, 25.0); 
@@ -597,27 +599,27 @@ class TraitementImage {
       cv.Mat vCappedF = cv.threshold(vLiftedF, 245.0, 245.0, cv.THRESH_TRUNC).$2;
       hsvChannels[2] = vCappedF.convertTo(cv.MatType.CV_8UC1);
 
-      cv.Mat climHsvFinal = cv.merge(hsvChannels);
-      cv.Mat climRgbFinalPropre = cv.cvtColor(climHsvFinal, cv.COLOR_HSV2BGR);
+      cv.Mat equipementHsvFinal = cv.merge(hsvChannels);
+      cv.Mat equipementRgbFinalPropre = cv.cvtColor(equipementHsvFinal, cv.COLOR_HSV2BGR);
 
       // =========================================================================
       // === PHASE 5.5 : DEGRADATION REALISTE (CAPTEUR PHOTO) ===
       // =========================================================================
-      cv.Mat climBrouillee = cv.gaussianBlur(climRgbFinalPropre, (3, 3), 0.6);
+      cv.Mat equipementBrouillee = cv.gaussianBlur(equipementRgbFinalPropre, (3, 3), 0.6);
 
-      cv.Mat climFloat = climBrouillee.convertTo(cv.MatType.CV_32FC3);
+      cv.Mat equipementFloat = equipementBrouillee.convertTo(cv.MatType.CV_32FC3);
       cv.Mat noise = cv.Mat.zeros(hMur, wMur, cv.MatType.CV_32FC3);
       
       cv.randn(noise, cv.Scalar.all(0.0), cv.Scalar.all(8.0)); 
-      cv.Mat climNoisyFloat = cv.add(climFloat, noise);
+      cv.Mat equipementNoisyFloat = cv.add(equipementFloat, noise);
       
-      cv.Mat climRgbFinal = climNoisyFloat.convertTo(cv.MatType.CV_8UC3);
+      cv.Mat equipementRgbFinal = equipementNoisyFloat.convertTo(cv.MatType.CV_8UC3);
 
       // =========================================================================
       // === PHASE 6 : CREATION DU CALQUE PNG TRANSPARENT (SECURISE) ===
       // =========================================================================
-      // On combine l'Alpha de la Clim avec l'intensité de l'Ombre pour créer 
-      // un PNG transparent autonome qu'on mettra en cache pour accélérer la Goulotte.
+      // On combine l'Alpha de l'équipement avec l'intensité de l'Ombre pour créer 
+      // un PNG transparent autonome qu'on mettra en cache.
       
       cv.Mat alphaMaskF = alphaMask.convertTo(cv.MatType.CV_32FC1, alpha: 1.0 / 255.0);
       cv.Mat ombreF = ombreTotale.convertTo(cv.MatType.CV_32FC1, alpha: 1.0 / 255.0);
@@ -631,7 +633,7 @@ class TraitementImage {
       cv.Mat finalAlpha8u = finalAlphaF.convertTo(cv.MatType.CV_8UC1, alpha: 255.0);
 
       cv.Mat bgrFinal = cv.Mat.zeros(hMur, wMur, cv.MatType.CV_8UC3);
-      climRgbFinal.copyTo(bgrFinal, mask: alphaMask);
+      equipementRgbFinal.copyTo(bgrFinal, mask: alphaMask);
 
       // Sécurité ultime pour le canal Alpha sans utiliser d'array dynamique (qui crashait)
       cv.Mat bgraFinal = cv.cvtColor(bgrFinal, cv.COLOR_BGR2BGRA);
@@ -680,7 +682,7 @@ class TraitementImage {
   // === INCRUSTATION REALISTE DE LA GOULOTTE ===
   // =========================================================================
   static Future<Uint8List?> incrusterGoulotte({
-    required Uint8List imageAvecClimBytes, // Sera toujours le Mur Propre désormais
+    required Uint8List imageDeFondBytes, // Sera toujours le Mur Propre désormais
     required double ptDepartX,
     required double ptDepartY,
     required double ptArriveeX,
@@ -688,7 +690,7 @@ class TraitementImage {
     required double largeurPx,
   }) async {
     try {
-      cv.Mat fondMat = cv.imdecode(imageAvecClimBytes, cv.IMREAD_COLOR);
+      cv.Mat fondMat = cv.imdecode(imageDeFondBytes, cv.IMREAD_COLOR);
       int w = fondMat.cols;
       int h = fondMat.rows;
 
@@ -756,7 +758,7 @@ class TraitementImage {
       }
 
       // 3. Création de l'ombre portée de la goulotte (Drop Shadow)
-      // Ombre adaptative calculée sur le fond (comme pour la clim)
+      // Ombre adaptative calculée sur le fond (comme pour l'équipement)
       cv.Mat grayFond = cv.cvtColor(fondMat, cv.COLOR_BGR2GRAY);
       int downscaleSobelG = 32;
       cv.Mat grayFondSmall = cv.resize(grayFond, (w ~/ downscaleSobelG, h ~/ downscaleSobelG));
@@ -779,7 +781,7 @@ class TraitementImage {
       double dirLumiereXG = gradXG / normeG;
       double dirLumiereYG = gradYG / normeG;
 
-      double ratioVolumeGoulotte = 40.0 / 100.0; // Goulotte moins profonde que la clim
+      double ratioVolumeGoulotte = 40.0 / 100.0; // Goulotte moins profonde
       double forceOmbreGoulotte = 12.0 * ratioVolumeGoulotte;
       double longueurOmbreGoulotte = forceOmbreGoulotte * ratioContrasteGoulotte;
 
@@ -812,7 +814,7 @@ class TraitementImage {
       cv.Mat fondOmbreF = cv.multiply(fondF, invOmbreF);
       cv.Mat murOmbre = fondOmbreF.convertTo(cv.MatType.CV_8UC3);
 
-      // 4. Teinte et Lumière dynamiques (Même traitement que pour la Clim)
+      // 4. Teinte et Lumière dynamiques (Même traitement que pour l'équipement)
       // CORRECTION MAJEURE : On utilise 'fondMat' (le mur vierge) et non 'murOmbre' !
       // Si on utilise 'murOmbre', la goulotte analyse sa PROPRE ombre et s'assombrit elle-même.
       cv.Mat murUltraSmall = cv.resize(fondMat, (w ~/ 32, h ~/ 32), interpolation: cv.INTER_AREA);
@@ -865,10 +867,10 @@ class TraitementImage {
       cv.Mat vShadowedF = cv.multiply(vChannelF, ratioSecurise);
 
       // LUMINOSITE ADAPTATIVE POUR LA GOULOTTE
-      // Comme pour la clim, on adapte l'exposition de la goulotte selon la lumière de la pièce.
+      // Comme pour l'équipement, on adapte l'exposition de la goulotte selon la lumière de la pièce.
       // Si le mur derrière la goulotte est sombre (ex: à l'ombre, 80/255), on baisse l'intensité lumineuse de la goulotte.
-      double ratioLuminosite = (lumMurLocal / 128.0).clamp(0.65, 1.15);
-      double luminositeGoulotteAdaptive = 1.0 * ratioLuminosite;
+      double ratioLuminosite = (lumMurLocal / 128.0).clamp(0.65, 1.0);
+      double luminositeGoulotteAdaptive = 0.95 * ratioLuminosite;
       
       vShadowedF = vShadowedF.convertTo(cv.MatType.CV_32FC1, alpha: luminositeGoulotteAdaptive);
 

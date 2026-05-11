@@ -16,7 +16,7 @@ class LigneGoulotte {
   final Offset end;
   LigneGoulotte(this.start, this.end);
 
-  // Surcharge des opérateurs pour comparer facilement deux goulottes (Utile pour le Undo)
+  // AJOUT : Surcharge des opérateurs pour comparer facilement deux goulottes (Utile pour le Undo)
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
@@ -33,7 +33,7 @@ class LigneGoulotte {
 enum DragMode { none, start, end, body, drawingNew }
 
 /// Écran affichant l'image capturée, exécutant la détection de l'IA, 
-/// et permettant à l'utilisateur d'incruster et de manipuler des modèles de climatisation.
+/// et permettant à l'utilisateur d'incruster et de manipuler des modèles d'équipement.
 class EcranResultat extends StatefulWidget {
   final String photoPath;
 
@@ -47,21 +47,23 @@ class _EcranResultatState extends State<EcranResultat> {
   // =========================================================================
   // === VARIABLES D'ÉTAT ===
   // =========================================================================
-  String _categorieSelectionnee = 'Climatisations';
+  
+  // NOUVEAU : On ne force plus la catégorie "Climatisations", on prend dynamiquement la 1ère dispo
+  late String _categorieSelectionnee;
   Equipement? _modeleSelectionne;
   
   bool _isProcessing = true;
   String _loadingMessage = "Analyse en cours...";
   
-  Uint8List? _imageResultatBytes; // L'image finale (avec goulotte + clim)
+  Uint8List? _imageResultatBytes; // L'image finale (avec goulotte + equipement)
   
   // =========================================================================
   // === SYSTÈME DE CACHE INDÉPENDANT ===
   // =========================================================================
-  // En séparant la clim et la goulotte dans 2 variables différentes, on évite les recalculs inutiles !
+  // En séparant l'équipement et la goulotte dans 2 variables différentes, on évite les recalculs inutiles !
   Uint8List? _imageFondPropreBytes;
   Uint8List? _imageFondAvecGoulotteBytes; 
-  Uint8List? _calqueClimPngBytes; // Le calque de la Clim transparent (PNG)
+  Uint8List? _calqueEquipementPngBytes; // Le calque de l'équipement transparent (PNG)
   
   int? _imageWidth;
   int? _imageHeight;
@@ -76,7 +78,7 @@ class _EcranResultatState extends State<EcranResultat> {
   // =========================================================================
   final ValueNotifier<Offset> _decalageNotifier = ValueNotifier(Offset.zero);
   final ValueNotifier<double> _splitNotifier = ValueNotifier(1.0);
-  final ValueNotifier<bool> _isDraggingNotifier = ValueNotifier(false);
+  final ValueNotifier<bool> _isDraggingEquipementNotifier = ValueNotifier(false);
 
   // Variables d'état pour la Goulotte interactive
   bool _isDrawGoulotteMode = false;
@@ -98,6 +100,8 @@ class _EcranResultatState extends State<EcranResultat> {
   @override
   void initState() {
     super.initState();
+    // Dynamisme parfait basé sur le catalogue existant
+    _categorieSelectionnee = CatalogueService().catalogueGlobal.keys.first;
     _analyserImage();
   }
 
@@ -106,7 +110,7 @@ class _EcranResultatState extends State<EcranResultat> {
     _transformationController.dispose();
     _decalageNotifier.dispose();
     _splitNotifier.dispose();
-    _isDraggingNotifier.dispose();
+    _isDraggingEquipementNotifier.dispose();
     _goulotteNotifier.dispose();
     _isDraggingGoulotteNotifier.dispose();
     _goulotteCurrentEndOrigNotifier.dispose();
@@ -232,7 +236,7 @@ class _EcranResultatState extends State<EcranResultat> {
             'lamaBytes': IAService().lamaBytes,
           });
           _imageFondAvecGoulotteBytes = null; // Sécurité Cache
-          _calqueClimPngBytes = null;
+          _calqueEquipementPngBytes = null;
         }
         
         setState(() {
@@ -314,7 +318,7 @@ class _EcranResultatState extends State<EcranResultat> {
         'lamaBytes': IAService().lamaBytes,
       });
       _imageFondAvecGoulotteBytes = null; // On nettoie les caches car la base a changé
-      _calqueClimPngBytes = null;
+      _calqueEquipementPngBytes = null;
     } catch (e) {
       print("Erreur inpainting manuel : $e");
     }
@@ -325,7 +329,7 @@ class _EcranResultatState extends State<EcranResultat> {
   }
 
   // NOUVELLE ARCHITECTURE : On choisit ce qu'on recalcule !
-  Future<void> _genererIncrustation({bool recomputeGoulotte = false, bool recomputeClim = false}) async {
+  Future<void> _genererIncrustation({bool recomputeGoulotte = false, bool recomputeEquipement = false}) async {
     if (_pointsCibles == null || _modeleSelectionne == null || _imageFondPropreBytes == null) return;
     
     setState(() {
@@ -334,9 +338,9 @@ class _EcranResultatState extends State<EcranResultat> {
     });
 
     try {
-      String climPath = _modeleSelectionne!.chemin;
-      final ByteData data = await DefaultAssetBundle.of(context).load(climPath);
-      Uint8List climBytes = data.buffer.asUint8List();
+      String equipementPath = _modeleSelectionne!.chemin;
+      final ByteData data = await DefaultAssetBundle.of(context).load(equipementPath);
+      Uint8List equipementBytes = data.buffer.asUint8List();
       
       double profondeur = _modeleSelectionne!.profondeur;
       double hauteur = _modeleSelectionne!.hauteur;
@@ -359,7 +363,7 @@ class _EcranResultatState extends State<EcranResultat> {
           setState(() => _loadingMessage = "Incrustation de la goulotte...");
           
           _imageFondAvecGoulotteBytes = await compute(TraitementImage.incrusterGoulotteIsolate, {
-            'imageAvecClimBytes': _imageFondPropreBytes!, // Toujours dessiné sur le mur propre !
+            'imageDeFondBytes': _imageFondPropreBytes!, // Toujours dessiné sur le mur propre !
             'ptDepartX': _goulotteNotifier.value!.start.dx,
             'ptDepartY': _goulotteNotifier.value!.start.dy,
             'ptArriveeX': _goulotteNotifier.value!.end.dx,
@@ -371,17 +375,17 @@ class _EcranResultatState extends State<EcranResultat> {
         }
       }
 
-      // 2. GÉNÉRATION DU CALQUE DE LA CLIMATISATION EN PNG (Seulement si demandé ou pas en cache)
-      if (recomputeClim || _calqueClimPngBytes == null) {
-        setState(() => _loadingMessage = "Calcul des ombres de la clim...");
+      // 2. GÉNÉRATION DU CALQUE DE L'ÉQUIPEMENT EN PNG (Seulement si demandé ou pas en cache)
+      if (recomputeEquipement || _calqueEquipementPngBytes == null) {
+        setState(() => _loadingMessage = "Calcul des ombres de l'équipement...");
         
-        _calqueClimPngBytes = await compute(TraitementImage.genererCalqueClimatisationIsolate, {
+        _calqueEquipementPngBytes = await compute(TraitementImage.genererCalqueEquipementIsolate, {
           'fondPropreBytes': _imageFondPropreBytes!, // Toujours calculée d'après le mur propre !
-          'climBytes': climBytes,
+          'equipementBytes': equipementBytes,
           'pointsIA': _pointsCibles!,
           'decalageX': _decalageNotifier.value.dx,
           'decalageY': _decalageNotifier.value.dy,
-          'climAssetPath': climPath,
+          'equipementAssetPath': equipementPath,
           'profondeurMm': profondeur,
           'hauteurMm': hauteur, 
           'largeurMm': largeur, 
@@ -394,7 +398,7 @@ class _EcranResultatState extends State<EcranResultat> {
 
       Uint8List? resultImage = await compute(TraitementImage.fusionnerCalqueIsolate, {
         'fondBytes': fondBase,
-        'calquePngBytes': _calqueClimPngBytes!
+        'calquePngBytes': _calqueEquipementPngBytes!
       });
 
       if (resultImage != null) {
@@ -418,13 +422,13 @@ class _EcranResultatState extends State<EcranResultat> {
       // Mode Goulotte : On annule le mouvement et on revient à la ligne d'origine
       if (_goulotteNotifier.value != null && _goulotteInitiale != null) {
         _goulotteNotifier.value = _goulotteInitiale;
-        _genererIncrustation(recomputeGoulotte: true, recomputeClim: false);
+        _genererIncrustation(recomputeGoulotte: true, recomputeEquipement: false);
       }
     } else {
-      // Mode Clim : On annule le décalage
+      // Mode Equipement : On annule le décalage
       if (_decalageNotifier.value != Offset.zero) {
         _decalageNotifier.value = Offset.zero;
-        _genererIncrustation(recomputeGoulotte: false, recomputeClim: true);
+        _genererIncrustation(recomputeGoulotte: false, recomputeEquipement: true);
       }
     }
   }
@@ -440,7 +444,7 @@ class _EcranResultatState extends State<EcranResultat> {
       final result = await ImageGallerySaverPlus.saveImage(
         _imageResultatBytes!,
         quality: 100,
-        name: "Devis_Clim_${DateTime.now().millisecondsSinceEpoch}", 
+        name: "Devis_Simulation_${DateTime.now().millisecondsSinceEpoch}", 
       );
       
       if (!mounted) return;
@@ -623,12 +627,12 @@ class _EcranResultatState extends State<EcranResultat> {
               if (!_isDraggingGoulotteNotifier.value) return;
               _isDraggingGoulotteNotifier.value = false;
               // Seule la goulotte a bougé !
-              _genererIncrustation(recomputeGoulotte: true, recomputeClim: false);
+              _genererIncrustation(recomputeGoulotte: true, recomputeEquipement: false);
             },
             onPanCancel: () {
               if (!_isDraggingGoulotteNotifier.value) return;
               _isDraggingGoulotteNotifier.value = false;
-              _genererIncrustation(recomputeGoulotte: true, recomputeClim: false);
+              _genererIncrustation(recomputeGoulotte: true, recomputeEquipement: false);
             },
             child: Container(width: len, height: 40, color: Colors.transparent),
           ),
@@ -669,13 +673,13 @@ class _EcranResultatState extends State<EcranResultat> {
             _magnifierPositionNotifier.value = null; // Cache la loupe
             if (!_isDraggingGoulotteNotifier.value) return;
             _isDraggingGoulotteNotifier.value = false;
-            _genererIncrustation(recomputeGoulotte: true, recomputeClim: false);
+            _genererIncrustation(recomputeGoulotte: true, recomputeEquipement: false);
           },
           onPanCancel: () {
             _magnifierPositionNotifier.value = null; // Cache la loupe
             if (!_isDraggingGoulotteNotifier.value) return;
             _isDraggingGoulotteNotifier.value = false;
-            _genererIncrustation(recomputeGoulotte: true, recomputeClim: false);
+            _genererIncrustation(recomputeGoulotte: true, recomputeEquipement: false);
           },
           child: Container(width: 50, height: 50, color: Colors.transparent),
         ),
@@ -715,13 +719,13 @@ class _EcranResultatState extends State<EcranResultat> {
             _magnifierPositionNotifier.value = null; // Cache la loupe
             if (!_isDraggingGoulotteNotifier.value) return;
             _isDraggingGoulotteNotifier.value = false;
-            _genererIncrustation(recomputeGoulotte: true, recomputeClim: false);
+            _genererIncrustation(recomputeGoulotte: true, recomputeEquipement: false);
           },
           onPanCancel: () {
             _magnifierPositionNotifier.value = null; // Cache la loupe
             if (!_isDraggingGoulotteNotifier.value) return;
             _isDraggingGoulotteNotifier.value = false;
-            _genererIncrustation(recomputeGoulotte: true, recomputeClim: false);
+            _genererIncrustation(recomputeGoulotte: true, recomputeEquipement: false);
           },
           child: Container(width: 50, height: 50, color: Colors.transparent),
         ),
@@ -747,11 +751,11 @@ class _EcranResultatState extends State<EcranResultat> {
       hauteurMm = _modeleSelectionne!.hauteur;
     }
 
-    double climWPxOrig = (largeurMm / 50.0) * autoWPxOrig;
-    double climHPxOrig = climWPxOrig * (hauteurMm / largeurMm);
+    double equipementWPxOrig = (largeurMm / 50.0) * autoWPxOrig;
+    double equipementHPxOrig = equipementWPxOrig * (hauteurMm / largeurMm);
 
-    double climScreenW = climWPxOrig * scale;
-    double climScreenH = climHPxOrig * scale;
+    double equipementScreenW = equipementWPxOrig * scale;
+    double equipementScreenH = equipementHPxOrig * scale;
 
     double angleRad = math.atan2(dy, dx);
     
@@ -763,9 +767,9 @@ class _EcranResultatState extends State<EcranResultat> {
       children: [
         // 1. Couche de Fond : Mur Propre OU Mur avec OpenCV Goulotte
         Positioned.fill(
-          child: ValueListenableBuilder<bool>( // Écoute le drag de la clim
-            valueListenable: _isDraggingNotifier,
-            builder: (context, isDraggingClim, _) {
+          child: ValueListenableBuilder<bool>( // Écoute le drag de l'équipement
+            valueListenable: _isDraggingEquipementNotifier,
+            builder: (context, isDraggingEquipement, _) {
               return ValueListenableBuilder<bool>( // Écoute le drag de la goulotte
                 valueListenable: _isDraggingGoulotteNotifier,
                 builder: (context, isDraggingGoulotte, _) {
@@ -774,7 +778,7 @@ class _EcranResultatState extends State<EcranResultat> {
                     // Quand on déplace la goulotte, on affiche le mur propre en fond.
                     imgToShow = _imageFondPropreBytes;
                   } else {
-                    // Sinon (déplacement clim ou repos), le fond est le mur avec la goulotte (si tracée).
+                    // Sinon (déplacement equipement ou repos), le fond est le mur avec la goulotte (si tracée).
                     imgToShow = _imageFondAvecGoulotteBytes ?? _imageFondPropreBytes;
                   }
                   if (imgToShow == null) {
@@ -790,13 +794,13 @@ class _EcranResultatState extends State<EcranResultat> {
         // 2. Couche OpenCV Résultat Complet (Cachée pendant TOUT glissement)
         if (_imageResultatBytes != null)
           ValueListenableBuilder<bool>(
-            valueListenable: _isDraggingNotifier,
-            builder: (context, isDraggingClim, _) {
+            valueListenable: _isDraggingEquipementNotifier,
+            builder: (context, isDraggingEquipement, _) {
               return ValueListenableBuilder<bool>(
                 valueListenable: _isDraggingGoulotteNotifier,
                 builder: (context, isDraggingGoulotte, _) {
                   // Si l'utilisateur touche une pièce, on cache le rendu final
-                  if (isDraggingClim || isDraggingGoulotte) return const SizedBox.shrink(); 
+                  if (isDraggingEquipement || isDraggingGoulotte) return const SizedBox.shrink(); 
                   
                   return ValueListenableBuilder<double>(
                     valueListenable: _splitNotifier,
@@ -822,14 +826,14 @@ class _EcranResultatState extends State<EcranResultat> {
               valueListenable: _goulotteNotifier,
               builder: (context, goulotte, _) {
                 return ValueListenableBuilder<bool>(
-                  valueListenable: _isDraggingNotifier, // Etat du drag clim
-                  builder: (context, isDraggingClim, _) {
+                  valueListenable: _isDraggingEquipementNotifier, // Etat du drag équipement
+                  builder: (context, isDraggingEquipement, _) {
                     return ValueListenableBuilder<bool>(
                       valueListenable: _isDraggingGoulotteNotifier, // Etat du drag goulotte
                       builder: (context, isDraggingGoulotte, _) {
                         
-                        // On affiche la ligne 2D temporaire si on drag la goulotte OU LA CLIM !
-                        bool showLine = isDraggingClim || isDraggingGoulotte;
+                        // On affiche la ligne 2D temporaire si on drag la goulotte OU L'EQUIPEMENT !
+                        bool showLine = isDraggingEquipement || isDraggingGoulotte;
                         // On affiche les ronds bleus (nœuds) uniquement si l'outil pinceau est activé
                         bool showNodes = _isDrawGoulotteMode;
 
@@ -856,7 +860,7 @@ class _EcranResultatState extends State<EcranResultat> {
         // 3. Curseur du slider avant/après
         if (_imageResultatBytes != null)
           ValueListenableBuilder<bool>(
-            valueListenable: _isDraggingNotifier,
+            valueListenable: _isDraggingEquipementNotifier,
             builder: (context, isDragging, _) {
               // On masque la barre de slider si l'utilisateur trace une goulotte ou drag
               if (isDragging || _isDrawGoulotteMode) return const SizedBox.shrink();
@@ -904,34 +908,34 @@ class _EcranResultatState extends State<EcranResultat> {
             }
           ),
 
-        // 4. L'image brute de la Clim (qui s'affiche en transparence UNIQUEMENT pendant un drag)
+        // 4. L'image brute de l'Équipement (qui s'affiche en transparence UNIQUEMENT pendant un drag)
         if (_modeleSelectionne != null)
           ValueListenableBuilder<Offset>(
             valueListenable: _decalageNotifier,
             builder: (context, decalage, _) {
               return ValueListenableBuilder<bool>(
-                valueListenable: _isDraggingNotifier,
-                builder: (context, isDraggingClim, _) {
-                  double climScreenX = (ptHgXOrig + decalage.dx) * scale + offsetX;
-                  double climScreenY = (ptHgYOrig + decalage.dy) * scale + offsetY;
+                valueListenable: _isDraggingEquipementNotifier,
+                builder: (context, isDraggingEquipement, _) {
+                  double equipementScreenX = (ptHgXOrig + decalage.dx) * scale + offsetX;
+                  double equipementScreenY = (ptHgYOrig + decalage.dy) * scale + offsetY;
                   
                   return Positioned(
-                    key: const ValueKey('clim_draggable'),
-                    left: climScreenX,
-                    top: climScreenY,
-                    width: climScreenW,
-                    height: climScreenH,
+                    key: const ValueKey('equipement_draggable'),
+                    left: equipementScreenX,
+                    top: equipementScreenY,
+                    width: equipementScreenW,
+                    height: equipementScreenH,
                     child: IgnorePointer(
-                      // Désactive le drag de la clim si on est en mode dessin de goulotte
+                      // Désactive le drag de l'équipement si on est en mode dessin de goulotte
                       ignoring: _isDrawGoulotteMode,
                       child: GestureDetector(
                         behavior: HitTestBehavior.translucent,
                         onPanStart: (_) {
                           if (_activePointers > 1) return;
-                          _isDraggingNotifier.value = true;
+                          _isDraggingEquipementNotifier.value = true;
                         },
                         onPanUpdate: (details) { 
-                           if (_activePointers > 1 || !_isDraggingNotifier.value) return;
+                           if (_activePointers > 1 || !_isDraggingEquipementNotifier.value) return;
                            
                            double cosA = math.cos(angleRad);
                            double sinA = math.sin(angleRad);
@@ -944,25 +948,25 @@ class _EcranResultatState extends State<EcranResultat> {
                            );
                         },
                         onPanEnd: (_) { 
-                           if (!_isDraggingNotifier.value) return;
-                           _isDraggingNotifier.value = false;
-                           // On ne re-calcule que la Clim ! C'est ce qui fait gagner du temps.
-                           _genererIncrustation(recomputeGoulotte: false, recomputeClim: true); 
+                           if (!_isDraggingEquipementNotifier.value) return;
+                           _isDraggingEquipementNotifier.value = false;
+                           // On ne re-calcule que l'Equipement ! C'est ce qui fait gagner du temps.
+                           _genererIncrustation(recomputeGoulotte: false, recomputeEquipement: true); 
                          },
                         onPanCancel: () { 
-                           if (!_isDraggingNotifier.value) return;
-                           _isDraggingNotifier.value = false;
-                           _genererIncrustation(recomputeGoulotte: false, recomputeClim: true); 
+                           if (!_isDraggingEquipementNotifier.value) return;
+                           _isDraggingEquipementNotifier.value = false;
+                           _genererIncrustation(recomputeGoulotte: false, recomputeEquipement: true); 
                          },
                         child: Transform.rotate(
                           angle: angleRad,
                           alignment: Alignment.topLeft, 
-                          // On enveloppe d'un ValueListenableBuilder Goulotte pour que la Clim apparaisse semi-transparente SI la goulotte est en cours de drag
+                          // On enveloppe d'un ValueListenableBuilder Goulotte pour que l'Equipement apparaisse semi-transparent SI la goulotte est en cours de drag
                           child: ValueListenableBuilder<bool>(
                             valueListenable: _isDraggingGoulotteNotifier,
                             builder: (context, isDraggingGoulotte, _) {
                               return Opacity(
-                                opacity: (isDraggingClim || isDraggingGoulotte) ? 0.65 : 0.0, 
+                                opacity: (isDraggingEquipement || isDraggingGoulotte) ? 0.65 : 0.0, 
                                 child: Image.asset(_modeleSelectionne!.chemin, fit: BoxFit.fill),
                               );
                             }
@@ -1032,7 +1036,7 @@ class _EcranResultatState extends State<EcranResultat> {
                         _goulotteStartOrig = null;
                         _goulotteCurrentEndOrigNotifier.value = null;
                         // On trace la toute première goulotte
-                        _genererIncrustation(recomputeGoulotte: true, recomputeClim: false);
+                        _genererIncrustation(recomputeGoulotte: true, recomputeEquipement: false);
                       }
                     },
                     onPanCancel: () {
@@ -1104,7 +1108,7 @@ class _EcranResultatState extends State<EcranResultat> {
 
         if (_isProcessing)
           ValueListenableBuilder<bool>(
-            valueListenable: _isDraggingNotifier,
+            valueListenable: _isDraggingEquipementNotifier,
             builder: (context, isDragging, _) {
                if (isDragging) return const SizedBox.shrink(); 
                return Positioned.fill(
@@ -1186,16 +1190,16 @@ class _EcranResultatState extends State<EcranResultat> {
                     scrollDirection: Axis.horizontal,
                     itemCount: catalogueGlobal[_categorieSelectionnee]!.length,
                     itemBuilder: (context, index) {
-                      final clim = catalogueGlobal[_categorieSelectionnee]![index];
-                      final bool isSelected = _modeleSelectionne == clim;
+                      final equipement = catalogueGlobal[_categorieSelectionnee]![index];
+                      final bool isSelected = _modeleSelectionne == equipement;
 
                       return GestureDetector(
                         onTap: () {
                           if (_isProcessing) return;
                           setState(() {
-                            _modeleSelectionne = clim;
-                            // En cas de changement de modèle, on ne recalcule QUE la clim !
-                            _genererIncrustation(recomputeGoulotte: false, recomputeClim: true);
+                            _modeleSelectionne = equipement;
+                            // En cas de changement de modèle, on ne recalcule QUE l'équipement !
+                            _genererIncrustation(recomputeGoulotte: false, recomputeEquipement: true);
                           });
                         },
                         child: AnimatedContainer(
@@ -1211,10 +1215,10 @@ class _EcranResultatState extends State<EcranResultat> {
                           child: Column(
                             mainAxisAlignment: MainAxisAlignment.center,
                             children: [
-                              Expanded(child: Padding(padding: const EdgeInsets.all(8.0), child: Image.asset(clim.chemin, fit: BoxFit.contain))),
+                              Expanded(child: Padding(padding: const EdgeInsets.all(8.0), child: Image.asset(equipement.chemin, fit: BoxFit.contain))),
                               Padding(
                                 padding: const EdgeInsets.symmetric(horizontal: 4.0, vertical: 8.0),
-                                child: Text(clim.nom, style: TextStyle(fontSize: 12, fontWeight: isSelected ? FontWeight.bold : FontWeight.normal, color: isSelected ? Colors.teal.shade800 : Colors.black87), textAlign: TextAlign.center, maxLines: 2),
+                                child: Text(equipement.nom, style: TextStyle(fontSize: 12, fontWeight: isSelected ? FontWeight.bold : FontWeight.normal, color: isSelected ? Colors.teal.shade800 : Colors.black87), textAlign: TextAlign.center, maxLines: 2),
                               ),
                             ],
                           ),
@@ -1244,8 +1248,8 @@ class _EcranResultatState extends State<EcranResultat> {
           _activePointers++;
           if (_activePointers > 1) {
             // Sécurité Anti-Missclick pendant le Zoom
-            // On annule silencieusement tous les glissements en cours (clim ou goulotte)
-            _isDraggingNotifier.value = false;
+            // On annule silencieusement tous les glissements en cours (equipement ou goulotte)
+            _isDraggingEquipementNotifier.value = false;
             _isDraggingGoulotteNotifier.value = false;
             _goulotteStartOrig = null;
             _goulotteCurrentEndOrigNotifier.value = null;
@@ -1329,8 +1333,8 @@ class _EcranResultatState extends State<EcranResultat> {
                           children: [
                             // Le bouton Réinitialiser intelligent (grisé pendant le drag ou le calcul)
                             ValueListenableBuilder<bool>(
-                              valueListenable: _isDraggingNotifier,
-                              builder: (context, isDraggingClim, _) {
+                              valueListenable: _isDraggingEquipementNotifier,
+                              builder: (context, isDraggingEquipement, _) {
                                 return ValueListenableBuilder<bool>(
                                   valueListenable: _isDraggingGoulotteNotifier,
                                   builder: (context, isDraggingGoulotte, _) {
@@ -1342,17 +1346,17 @@ class _EcranResultatState extends State<EcranResultat> {
                                           builder: (context, decalage, _) {
                                             
                                             // 1. Est-ce que le bouton a une raison d'être affiché ?
-                                            bool showResetClim = !_isDrawGoulotteMode && decalage != Offset.zero;
+                                            bool showResetEquipement = !_isDrawGoulotteMode && decalage != Offset.zero;
                                             bool showResetGoulotte = _isDrawGoulotteMode && 
                                                                      goulotteActuelle != null && 
                                                                      _goulotteInitiale != null && 
                                                                      goulotteActuelle != _goulotteInitiale;
 
                                             // Si on n'a rien bougé, on ne montre pas le bouton
-                                            if (!showResetClim && !showResetGoulotte) return const SizedBox.shrink();
+                                            if (!showResetEquipement && !showResetGoulotte) return const SizedBox.shrink();
 
                                             // 2. Est-ce que le bouton doit être désactivé (grisé) ?
-                                            bool isDisabled = _isProcessing || isDraggingClim || isDraggingGoulotte;
+                                            bool isDisabled = _isProcessing || isDraggingEquipement || isDraggingGoulotte;
 
                                             return Padding(
                                               padding: const EdgeInsets.only(bottom: 8.0),
@@ -1363,7 +1367,7 @@ class _EcranResultatState extends State<EcranResultat> {
                                                 child: IconButton(
                                                   icon: const Icon(Icons.restore),
                                                   color: isDisabled ? Colors.grey : Colors.teal, // Grise l'icône si inactif
-                                                  tooltip: _isDrawGoulotteMode ? 'Réinitialiser la goulotte' : 'Réinitialiser la clim',
+                                                  tooltip: _isDrawGoulotteMode ? 'Réinitialiser la goulotte' : 'Réinitialiser l\'équipement',
                                                   onPressed: isDisabled ? null : _reinitialiserPosition, // Désactive l'action
                                                 ),
                                               ),
@@ -1390,7 +1394,7 @@ class _EcranResultatState extends State<EcranResultat> {
                                   onPressed: _isProcessing ? null : () {
                                     setState(() {
                                       _isDrawGoulotteMode = !_isDrawGoulotteMode;
-                                      _isDraggingNotifier.value = false; 
+                                      _isDraggingEquipementNotifier.value = false; 
                                     });
                                   },
                                 ),
@@ -1433,7 +1437,7 @@ class _EcranResultatState extends State<EcranResultat> {
                                                       _goulotteNotifier.value = null; // Vide la goulotte unique
                                                       _goulotteInitiale = null; // On vide aussi l'historique
                                                       // On force le recalcul uniquement de la goulotte (qui disparaît)
-                                                      _genererIncrustation(recomputeGoulotte: true, recomputeClim: false); 
+                                                      _genererIncrustation(recomputeGoulotte: true, recomputeEquipement: false); 
                                                     },
                                                     child: const Text("Supprimer"),
                                                   ),

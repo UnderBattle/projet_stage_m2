@@ -26,20 +26,29 @@ class CatalogueService {
     'Climatisations': [
       Equipement(
         nom: 'Takao Plus Blanc',
-        chemin: 'assets/installations/clim_takao_plus/8e74c5374539-takao-plus-blanc-face-atlantic.png',
+        chemin: 'assets/installations/climatisation/clim_takao_plus/8e74c5374539-takao-plus-blanc-face-atlantic.png',
         profondeur: 240.0,
         hauteur: 270.0, 
         largeur: 798.0,
       ),
       Equipement(
         nom: 'Takao Plus Noir',
-        chemin: 'assets/installations/clim_takao_plus/baae79054b9d-takao-plus-noir-face-atlantic.png',
+        chemin: 'assets/installations/climatisation/clim_takao_plus/baae79054b9d-takao-plus-noir-face-atlantic.png',
         profondeur: 240.0,
         hauteur: 270.0,
         largeur: 798.0,
       )
     ],
+    'Unités Extérieures': [
+      Equipement(
+        nom: 'Takao Plus Exterieur',
+        chemin: 'assets/installations/unite_exterieur/unite_exterieur_takao_plus/unite_exterieur_takao_plus.png',
+        profondeur: 290.0,
+        hauteur: 542.0,
+        largeur: 799.0,
+      )
+    ],
     'Pompes à Chaleur': [], 
-    'Chaudières': [],       
+    'Chaudières': []
   };
 }
