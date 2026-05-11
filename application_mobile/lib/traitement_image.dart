@@ -40,20 +40,20 @@ class TraitementImage {
       cv.Mat bg = cv.imdecode(fondBytes, cv.IMREAD_COLOR);
       cv.Mat overlay = cv.imdecode(calquePngBytes, cv.IMREAD_UNCHANGED); // Conserve le canal Alpha
       
-      // 1. Extraction sécurisée du BGR et du canal Alpha
+      // Extraction sécurisée du BGR et du canal Alpha
       cv.Mat overlayBgr = cv.cvtColor(overlay, cv.COLOR_BGRA2BGR);
       var channels = cv.split(overlay);
       cv.Mat alpha = channels[3];
       
-      // 2. Normalisation de l'Alpha sur les 3 canaux
+      // Normalisation de l'Alpha sur les 3 canaux
       cv.Mat alpha3c8u = cv.cvtColor(alpha, cv.COLOR_GRAY2BGR);
       cv.Mat alpha3cF = alpha3c8u.convertTo(cv.MatType.CV_32FC3, alpha: 1.0 / 255.0);
       
-      // 3. Inversion de l'Alpha (pour creuser le trou dans l'image de fond)
+      // Inversion de l'Alpha (pour creuser le trou dans l'image de fond)
       cv.Mat invAlpha3c8u = cv.bitwiseNOT(alpha3c8u);
       cv.Mat invAlpha3cF = invAlpha3c8u.convertTo(cv.MatType.CV_32FC3, alpha: 1.0 / 255.0);
       
-      // 4. Blending mathématique
+      // Blending mathématique
       cv.Mat bgF = bg.convertTo(cv.MatType.CV_32FC3);
       cv.Mat fgF = overlayBgr.convertTo(cv.MatType.CV_32FC3);
       
@@ -425,13 +425,127 @@ class TraitementImage {
       cv.Mat maskBinaire = cv.threshold(alphaMask, 5, 255, cv.THRESH_BINARY).$2;
 
       // =========================================================================
+      // === PHASE 3.5 : GÉNÉRATION DU VOLUME 3D (EXTRUSION EXACTE DU PNG) ===
+      // =========================================================================
+      // Calcul du volume 3D basé sur le CONTOUR REEL du PNG (alpha mask)
+      // et non plus sur le rectangle de l'image. Cela permet d'avoir un volume 
+      // qui épouse parfaitement la forme de l'installation !
+
+      // On trouve le centre de l'image et le centre géométrique de la machine (via les moments)
+      double imgCX = wMur / 2.0;
+      double imgCY = hMur / 2.0;
+      
+      var moments = cv.moments(maskBinaire);
+      double eqCX = moments.m10 / (moments.m00 + 0.0001);
+      double eqCY = moments.m01 / (moments.m00 + 0.0001);
+      
+      // Le vecteur de fuite part du centre de l'image (effet de perspective photographique)
+      double vecX = eqCX - imgCX;
+      double vecY = eqCY - imgCY;
+      
+      // L'extrusion dépend de la profondeur physique, mais est réduite (0.08 au lieu de 0.18) 
+      // pour que ça ne soit "pas abusé" pour les photos prises de face. Le volume sera subtil et élégant.
+      double baseExtrusion = (profondeurMm / 1000.0) * 0.08; 
+      int dxBack = (vecX * baseExtrusion).toInt();
+      int dyBack = (vecY * baseExtrusion).toInt();
+      
+      cv.Mat sidesBgr = cv.Mat.zeros(hMur, wMur, cv.MatType.CV_8UC3);
+      cv.Mat sidesAlpha = cv.Mat.zeros(hMur, wMur, cv.MatType.CV_8UC1);
+      
+      // Couleur moyenne de l'installation pour des ombres 3D réalistes (pas trop sombres)
+      cv.Scalar baseColorEq = cv.mean(equipementBgr, mask: maskBinaire);
+      double mB = baseColorEq.val[0];
+      double mG = baseColorEq.val[1];
+      double mR = baseColorEq.val[2];
+      
+      // Simulation d'éclairage : La couleur s'adapte à la VRAIE couleur de la clim/unité !
+      // Les zones orientées vers le bas (colorBottom) sont légèrement plus sombres (0.55 au lieu de 0.75) pour un meilleur effet de volume.
+      cv.Scalar colorTop = cv.Scalar(mB * 0.98, mG * 0.98, mR * 0.98, 0);
+      cv.Scalar colorBottom = cv.Scalar(mB * 0.55, mG * 0.55, mR * 0.55, 0); 
+      cv.Scalar colorLeft = cv.Scalar(mB * 0.88, mG * 0.88, mR * 0.88, 0);
+      cv.Scalar colorRight = cv.Scalar(mB * 0.85, mG * 0.85, mR * 0.85, 0);
+
+      // Dessin du "fond" du volume 3D (le capot arrière collé au mur)
+      // On translate simplement le masque alpha parfait de la machine
+      cv.Mat affineBack = cv.getAffineTransform(
+        cv.VecPoint.fromList([cv.Point(0, 0), cv.Point(10, 0), cv.Point(0, 10)]),
+        cv.VecPoint.fromList([cv.Point(dxBack, dyBack), cv.Point(10 + dxBack, dyBack), cv.Point(dxBack, 10 + dyBack)])
+      );
+      cv.Mat backMaskAlpha = cv.warpAffine(maskBinaire, affineBack, (wMur, hMur));
+      cv.Mat backCapBgr = cv.Mat.zeros(hMur, wMur, cv.MatType.CV_8UC3)..setTo(colorBottom); 
+      backCapBgr.copyTo(sidesBgr, mask: backMaskAlpha);
+      cv.bitwiseOR(sidesAlpha, backMaskAlpha, dst: sidesAlpha);
+
+      // Dessin des murs latéraux reliant l'avant et l'arrière en suivant LE CONTOUR DU PNG
+      // C'est ce qui crée l'effet de volume 3D parfaitement moulé !
+      var contoursResult = cv.findContours(maskBinaire, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+      var contours = contoursResult.$1;
+
+      for (int c = 0; c < contours.length; c++) {
+        var contour = contours[c];
+        List<cv.Point> ptList = contour.toList();
+        int numPts = ptList.length;
+
+        for (int i = 0; i < numPts; i++) {
+          cv.Point p1 = ptList[i];
+          cv.Point p2 = ptList[(i + 1) % numPts];
+
+          cv.Point p1Back = cv.Point(p1.x + dxBack, p1.y + dyBack);
+          cv.Point p2Back = cv.Point(p2.x + dxBack, p2.y + dyBack);
+
+          double midX = (p1.x + p2.x) / 2.0;
+          double midY = (p1.y + p2.y) / 2.0;
+
+          // Orientation du segment par rapport au centre de la machine
+          double nx = midX - eqCX;
+          double ny = midY - eqCY;
+          double len = math.sqrt(nx * nx + ny * ny) + 0.0001;
+          nx /= len;
+          ny /= len;
+
+          cv.Scalar faceColor;
+          // Détermination intelligente de la face pour appliquer la bonne lumière directionnelle
+          if (ny < -0.5) {
+            faceColor = colorTop;
+          } else if (ny > 0.5) {
+            faceColor = colorBottom;
+          } else if (nx < 0) {
+            faceColor = colorLeft;
+          } else {
+            faceColor = colorRight;
+          }
+
+          var quad = [p1, p2, p2Back, p1Back];
+          cv.fillPoly(sidesBgr, cv.VecVecPoint.fromList([quad]), faceColor, lineType: cv.LINE_AA);
+          cv.fillPoly(sidesAlpha, cv.VecVecPoint.fromList([quad]), cv.Scalar.all(255), lineType: cv.LINE_AA);
+        }
+      }
+
+      // Un flou plus fort sur les couleurs pour adoucir les transitions 
+      // entre les faces (haut clair, bas sombre) et créer un dégradé naturel (effet biseauté).
+      cv.Mat sidesBgrSmooth = cv.gaussianBlur(sidesBgr, (15, 15), 0.0);
+      cv.Mat sidesAlphaSmooth = cv.gaussianBlur(sidesAlpha, (3, 3), 0.0);
+      
+      // Masque global englobant le volume 3D + la face avant
+      cv.Mat maskTotalVolume = cv.add(maskBinaire, sidesAlpha);
+      cv.Mat alphaMaskTotal = cv.add(alphaMask, sidesAlphaSmooth);
+
+      cv.Mat equipement3DBgr = sidesBgrSmooth.clone();
+      // On plaque l'image frontale exacte par dessus les murs 3D pour refermer la boîte
+      equipementBgr.copyTo(equipement3DBgr, mask: maskBinaire);
+      
+      equipementBgr = equipement3DBgr; 
+
+      // =========================================================================
       // === PHASE 4 : CALCUL DE LA DIRECTION DE LA LUMIERE ET OMBRE PROGRESSIVE ===
       // =========================================================================
       cv.Mat grayMur = cv.cvtColor(resultImg, cv.COLOR_BGR2GRAY);
       
       int downscaleSobel = 32;
       cv.Mat grayMurSmall = cv.resize(grayMur, (wMur ~/ downscaleSobel, hMur ~/ downscaleSobel));
-      cv.Mat maskBinaireSmall = cv.resize(maskBinaire, (wMur ~/ downscaleSobel, hMur ~/ downscaleSobel));
+      
+      // L'ombre portée est maintenant calculée par rapport au volume total ! (Plus de boîte qui flotte)
+      cv.Mat maskBinaireSmall = cv.resize(maskTotalVolume, (wMur ~/ downscaleSobel, hMur ~/ downscaleSobel));
 
       var meanStdDev = cv.meanStdDev(grayMurSmall);
       double lumiereMoyenneMur = meanStdDev.$1.val[0];
@@ -467,7 +581,9 @@ class TraitementImage {
       
       var dstPtsDir = cv.VecPoint.fromList([cv.Point(shiftX.toInt(), shiftY.toInt()), cv.Point(10 + shiftX.toInt(), shiftY.toInt()), cv.Point(shiftX.toInt(), 10 + shiftY.toInt())]);
       cv.Mat affineMatDir = cv.getAffineTransform(srcPts, dstPtsDir);
-      cv.Mat alphaOmbre = cv.warpAffine(alphaMask, affineMatDir, (wMur, hMur));
+      
+      // On projette l'ombre à partir du volume TOTAL pour éviter l'effet "boîte flottante"
+      cv.Mat alphaOmbre = cv.warpAffine(alphaMaskTotal, affineMatDir, (wMur, hMur));
       
       cv.Mat smallAlpha = cv.resize(alphaOmbre, (wMur ~/ 4, hMur ~/ 4));
       int baseBlur = (5 + (ratioVolume * 4) + ((1.0 - ratioContraste) * 8)).toInt();
@@ -478,7 +594,7 @@ class TraitementImage {
 
       var dstPtsContact = cv.VecPoint.fromList([cv.Point(0, 3), cv.Point(10, 3), cv.Point(0, 13)]);
       cv.Mat affineMatContact = cv.getAffineTransform(srcPts, dstPtsContact);
-      cv.Mat alphaContact = cv.warpAffine(alphaMask, affineMatContact, (wMur, hMur));
+      cv.Mat alphaContact = cv.warpAffine(alphaMaskTotal, affineMatContact, (wMur, hMur));
       
       cv.Mat smallContact = cv.resize(alphaContact, (wMur ~/ 4, hMur ~/ 4));
       cv.Mat smallContactFlou = cv.gaussianBlur(smallContact, (3, 3), 0.0);
@@ -512,7 +628,8 @@ class TraitementImage {
       cv.Mat murLisse = cv.resize(murUltraFlou, (wMur, hMur), interpolation: cv.INTER_CUBIC);
 
       cv.Scalar meanMurGlobal = cv.mean(murLisse);
-      cv.Scalar meanMurSousEquipement = cv.mean(murLisse, mask: maskBinaire);
+      // La lumière est analysée sur le mur se trouvant derrière l'ENSEMBLE de la machine
+      cv.Scalar meanMurSousEquipement = cv.mean(murLisse, mask: maskTotalVolume);
 
       double bMur = (meanMurGlobal.val[0] * reglageMixAmbiancePiece) + (meanMurSousEquipement.val[0] * reglageMixCouleurMur);
       double gMur = (meanMurGlobal.val[1] * reglageMixAmbiancePiece) + (meanMurSousEquipement.val[1] * reglageMixCouleurMur);
@@ -545,7 +662,7 @@ class TraitementImage {
       cv.Mat grayLisse = cv.cvtColor(murLisse, cv.COLOR_BGR2GRAY);
       cv.Mat grayLisseF = grayLisse.convertTo(cv.MatType.CV_32FC1);
 
-      cv.Scalar meanEquipementV = cv.mean(hsvChannels[2], mask: maskBinaire);
+      cv.Scalar meanEquipementV = cv.mean(hsvChannels[2], mask: maskTotalVolume);
       double lumaEquipementNativeHSV = math.max(meanEquipementV.val[0], 1.0);
 
       double denominateurLuma = estEquipementNoir ? math.max(lumaEquipementNativeHSV, 130.0) : lumaEquipementNativeHSV;
@@ -566,6 +683,7 @@ class TraitementImage {
          vShadowedF = vShadowedF.convertTo(cv.MatType.CV_32FC1, alpha: reglageLuminositeEquipementBlanc); 
       }
 
+      // La correction du contre-jour englobe le volume total, pas seulement la face
       cv.Rect rectEquipement = cv.boundingRect(cv.VecPoint.fromList(ptsDstLisses));
       int rx = math.max(0, rectEquipement.x - 20);
       int ry = math.max(0, rectEquipement.y - 20);
@@ -621,7 +739,7 @@ class TraitementImage {
       // On combine l'Alpha de l'équipement avec l'intensité de l'Ombre pour créer 
       // un PNG transparent autonome qu'on mettra en cache.
       
-      cv.Mat alphaMaskF = alphaMask.convertTo(cv.MatType.CV_32FC1, alpha: 1.0 / 255.0);
+      cv.Mat alphaMaskF = alphaMaskTotal.convertTo(cv.MatType.CV_32FC1, alpha: 1.0 / 255.0);
       cv.Mat ombreF = ombreTotale.convertTo(cv.MatType.CV_32FC1, alpha: 1.0 / 255.0);
       
       // Sécurité : On utilise cv.Mat.zeros et setTo pour avoir un fond 1.0 parfait.
@@ -633,7 +751,7 @@ class TraitementImage {
       cv.Mat finalAlpha8u = finalAlphaF.convertTo(cv.MatType.CV_8UC1, alpha: 255.0);
 
       cv.Mat bgrFinal = cv.Mat.zeros(hMur, wMur, cv.MatType.CV_8UC3);
-      equipementRgbFinal.copyTo(bgrFinal, mask: alphaMask);
+      equipementRgbFinal.copyTo(bgrFinal, mask: alphaMaskTotal);
 
       // Sécurité ultime pour le canal Alpha sans utiliser d'array dynamique (qui crashait)
       cv.Mat bgraFinal = cv.cvtColor(bgrFinal, cv.COLOR_BGR2BGRA);
@@ -749,13 +867,16 @@ class TraitementImage {
       _tracerLigneRectangulaire(goulotteBgr, p1, p2, cv.Scalar(245, 250, 250, 0), largeurPx * 0.50);
       _tracerLigneRectangulaire(goulotteBgr, p1, p2, cv.Scalar(255, 255, 255, 0), largeurPx * 0.15);
       
-      cv.Mat goulotteBgrSmooth = cv.gaussianBlur(goulotteBgr, (5, 5), 0.0);
-
       if (lenCap >= 1.0) {
-        cv.fillPoly(goulotteBgrSmooth, cv.VecVecPoint.fromList([[ptLeft, ptRight, ptRightMur, ptLeftMur]]), cv.Scalar(160, 165, 165, 0), lineType: cv.LINE_AA);
+        // Face inférieure (le bouchon du bas) encore plus sombre pour bien marquer le volume (130 au lieu de 160)
+        cv.fillPoly(goulotteBgr, cv.VecVecPoint.fromList([[ptLeft, ptRight, ptRightMur, ptLeftMur]]), cv.Scalar(130, 135, 135, 0), lineType: cv.LINE_AA);
         int edgeThickness = math.max(1, (largeurPx * 0.05).toInt());
-        cv.line(goulotteBgrSmooth, ptLeft, ptRight, cv.Scalar(190, 195, 195, 0), thickness: edgeThickness, lineType: cv.LINE_AA);
+        cv.line(goulotteBgr, ptLeft, ptRight, cv.Scalar(160, 165, 165, 0), thickness: edgeThickness, lineType: cv.LINE_AA);
       }
+
+      // Le flou est appliqué à la toute fin pour que la ligne sombre du bas
+      // se fonde de manière naturelle avec le reste de la goulotte (dégradé doux)
+      cv.Mat goulotteBgrSmooth = cv.gaussianBlur(goulotteBgr, (7, 7), 0.0);
 
       // 3. Création de l'ombre portée de la goulotte (Drop Shadow)
       // Ombre adaptative calculée sur le fond (comme pour l'équipement)
