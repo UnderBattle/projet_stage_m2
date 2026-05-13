@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'dart:math' as math;
+import 'dart:ui'; // AJOUT : Pour les effets de flou Glassmorphism
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'package:image_gallery_saver_plus/image_gallery_saver_plus.dart';
@@ -884,16 +885,23 @@ class _EcranResultatState extends State<EcranResultat> {
                         child: Stack(
                           alignment: Alignment.center, 
                           children: [
-                            Container(width: 3, color: Colors.white),
+                            // STYLE : La ligne blanche a un effet Glow subtil
+                            Container(
+                              width: 4, 
+                              decoration: BoxDecoration(
+                                color: Colors.white,
+                                boxShadow: [BoxShadow(color: Colors.teal.withValues(alpha: 0.5), blurRadius: 8, spreadRadius: 1)]
+                              ),
+                            ),
                             Positioned(
                               bottom: 20, 
                               child: Container(
-                                height: 35,
-                                width: 35,
-                                decoration: const BoxDecoration(
+                                height: 50, // Forme de pilule verticale
+                                width: 30,
+                                decoration: BoxDecoration(
                                   color: Colors.white,
-                                  shape: BoxShape.circle,
-                                  boxShadow: [BoxShadow(color: Colors.black38, blurRadius: 6, spreadRadius: 1)]
+                                  borderRadius: BorderRadius.circular(20),
+                                  boxShadow: const [BoxShadow(color: Colors.black38, blurRadius: 8, spreadRadius: 1)]
                                 ),
                                 child: const Icon(Icons.compare_arrows, size: 20, color: Colors.teal),
                               ),
@@ -986,7 +994,7 @@ class _EcranResultatState extends State<EcranResultat> {
             child: ValueListenableBuilder<LigneGoulotte?>(
               valueListenable: _goulotteNotifier,
               builder: (context, goulotte, _) {
-                // La couche d'interaction
+                // La couche d'interaction (Création OU Édition)
                 if (goulotte == null) {
                   // A - Mode plein écran pour tracer la toute première goulotte
                   return GestureDetector(
@@ -1112,18 +1120,22 @@ class _EcranResultatState extends State<EcranResultat> {
             builder: (context, isDragging, _) {
                if (isDragging) return const SizedBox.shrink(); 
                return Positioned.fill(
-                child: Container(
-                  color: Colors.black54,
-                  child: Center(
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        const CircularProgressIndicator(color: Colors.white),
-                        const SizedBox(height: 16),
-                        Text(_loadingMessage, style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold), textAlign: TextAlign.center),
-                      ],
+                // STYLE : Remplacement du fond noir par un effet verre dépoli élégant
+                child: BackdropFilter(
+                  filter: ImageFilter.blur(sigmaX: 5.0, sigmaY: 5.0),
+                  child: Container(
+                    color: Colors.black.withValues(alpha: 0.4),
+                    child: Center(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const CircularProgressIndicator(color: Colors.white),
+                          const SizedBox(height: 20),
+                          Text(_loadingMessage, style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w500), textAlign: TextAlign.center),
+                        ],
+                      )
                     )
-                  )
+                  ),
                 ),
               );
             }
@@ -1137,10 +1149,11 @@ class _EcranResultatState extends State<EcranResultat> {
 
     return Container(
       height: 190,
-      padding: const EdgeInsets.only(top: 10, bottom: 10),
+      padding: const EdgeInsets.only(top: 15, bottom: 10),
+      // STYLE : Bottom sheet moderne avec coins arrondis et ombre douce
       decoration: BoxDecoration(
         color: Colors.white,
-        boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.05), blurRadius: 10, offset: const Offset(0, -5))],
+        boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.08), blurRadius: 20, offset: const Offset(0, -5))],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -1158,10 +1171,13 @@ class _EcranResultatState extends State<EcranResultat> {
                 return Padding(
                   padding: const EdgeInsets.only(right: 8.0),
                   child: ChoiceChip(
-                    label: Text(catName, style: TextStyle(fontWeight: isSelected ? FontWeight.bold : FontWeight.normal)),
+                    label: Text(catName, style: TextStyle(fontWeight: isSelected ? FontWeight.bold : FontWeight.w500, color: isSelected ? Colors.teal.shade800 : Colors.grey.shade700)),
                     selected: isSelected,
-                    selectedColor: Colors.teal.shade100,
-                    checkmarkColor: Colors.teal.shade800,
+                    selectedColor: Colors.teal.withValues(alpha: 0.15),
+                    backgroundColor: Colors.grey.shade100,
+                    side: BorderSide.none, // Retrait des bordures pour un effet "pilule" moderne
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                    showCheckmark: false, // Plus propre sans le V de validation
                     onSelected: (bool selected) {
                       if (selected && !_isProcessing) {
                         setState(() => _categorieSelectionnee = catName);
@@ -1205,12 +1221,19 @@ class _EcranResultatState extends State<EcranResultat> {
                         child: AnimatedContainer(
                           duration: const Duration(milliseconds: 200),
                           width: 120,
-                          margin: EdgeInsets.only(left: 16.0, right: index == catalogueGlobal[_categorieSelectionnee]!.length - 1 ? 16.0 : 0.0),
+                          margin: EdgeInsets.only(left: 16.0, bottom: 8.0, top: 4.0, right: index == catalogueGlobal[_categorieSelectionnee]!.length - 1 ? 16.0 : 0.0),
+                          // STYLE : Carte équipement sublimée avec ombres douces et bordures fines
                           decoration: BoxDecoration(
-                            color: isSelected ? Colors.teal.withValues(alpha : 0.1) : Colors.white,
-                            border: Border.all(color: isSelected ? Colors.teal : Colors.grey.shade300, width: isSelected ? 3 : 1),
+                            color: isSelected ? Colors.teal.withValues(alpha : 0.05) : Colors.white,
+                            border: Border.all(color: isSelected ? Colors.teal : Colors.grey.shade200, width: 2),
                             borderRadius: BorderRadius.circular(15),
-                            boxShadow: [if (isSelected) BoxShadow(color: Colors.teal.withValues(alpha : 0.2), blurRadius: 8, offset: const Offset(0, 4))],
+                            boxShadow: [
+                              BoxShadow(
+                                color: isSelected ? Colors.teal.withValues(alpha : 0.15) : Colors.black.withValues(alpha: 0.04), 
+                                blurRadius: isSelected ? 12 : 8, 
+                                offset: const Offset(0, 4)
+                              )
+                            ],
                           ),
                           child: Column(
                             mainAxisAlignment: MainAxisAlignment.center,
@@ -1218,7 +1241,7 @@ class _EcranResultatState extends State<EcranResultat> {
                               Expanded(child: Padding(padding: const EdgeInsets.all(8.0), child: Image.asset(equipement.chemin, fit: BoxFit.contain))),
                               Padding(
                                 padding: const EdgeInsets.symmetric(horizontal: 4.0, vertical: 8.0),
-                                child: Text(equipement.nom, style: TextStyle(fontSize: 12, fontWeight: isSelected ? FontWeight.bold : FontWeight.normal, color: isSelected ? Colors.teal.shade800 : Colors.black87), textAlign: TextAlign.center, maxLines: 2),
+                                child: Text(equipement.nom, style: TextStyle(fontSize: 12, fontWeight: isSelected ? FontWeight.bold : FontWeight.w500, color: isSelected ? Colors.teal.shade800 : Colors.black87), textAlign: TextAlign.center, maxLines: 2),
                               ),
                             ],
                           ),
@@ -1241,6 +1264,7 @@ class _EcranResultatState extends State<EcranResultat> {
       appBar: AppBar(
         title: const Text('Configuration du Devis'),
         backgroundColor: Theme.of(context).colorScheme.inversePrimary,
+        elevation: 0,
       ),
       // Permet de compter le nombre de doigts à l'écran
       body: Listener(
@@ -1268,11 +1292,15 @@ class _EcranResultatState extends State<EcranResultat> {
               child: Container(
                 width: double.infinity,
                 margin: const EdgeInsets.only(left: 16.0, right: 16.0, top: 16.0, bottom: 8.0),
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(20),
+                  boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.1), blurRadius: 15, spreadRadius: 1)],
+                ),
                 child: Stack(
                   children: [
                     Positioned.fill(
                       child: ClipRRect(
-                        borderRadius: BorderRadius.circular(15),
+                        borderRadius: BorderRadius.circular(20),
                         // Écoute l'état de la goulotte pour réactiver intelligemment le Pan/Zoom
                         child: ValueListenableBuilder<LigneGoulotte?>(
                           valueListenable: _goulotteNotifier,
@@ -1359,16 +1387,26 @@ class _EcranResultatState extends State<EcranResultat> {
                                             bool isDisabled = _isProcessing || isDraggingEquipement || isDraggingGoulotte;
 
                                             return Padding(
-                                              padding: const EdgeInsets.only(bottom: 8.0),
-                                              child: Material(
-                                                color: Colors.white.withValues(alpha: isDisabled ? 0.5 : 0.9), // Grise le fond si inactif
-                                                shape: const CircleBorder(),
-                                                elevation: isDisabled ? 0 : 4, // Retire l'ombre si inactif
-                                                child: IconButton(
-                                                  icon: const Icon(Icons.restore),
-                                                  color: isDisabled ? Colors.grey : Colors.teal, // Grise l'icône si inactif
-                                                  tooltip: _isDrawGoulotteMode ? 'Réinitialiser la goulotte' : 'Réinitialiser l\'équipement',
-                                                  onPressed: isDisabled ? null : _reinitialiserPosition, // Désactive l'action
+                                              padding: const EdgeInsets.only(bottom: 12.0),
+                                              // STYLE : Bouton flottant Glassmorphism
+                                              child: Container(
+                                                decoration: BoxDecoration(
+                                                  shape: BoxShape.circle,
+                                                  boxShadow: [if (!isDisabled) BoxShadow(color: Colors.black.withValues(alpha: 0.15), blurRadius: 10, offset: const Offset(0, 4))],
+                                                ),
+                                                child: ClipOval(
+                                                  child: BackdropFilter(
+                                                    filter: ImageFilter.blur(sigmaX: 8, sigmaY: 8),
+                                                    child: Container(
+                                                      color: Colors.white.withValues(alpha: isDisabled ? 0.4 : 0.85),
+                                                      child: IconButton(
+                                                        icon: const Icon(Icons.restore),
+                                                        color: isDisabled ? Colors.grey : Colors.teal, // Grise l'icône si inactif
+                                                        tooltip: _isDrawGoulotteMode ? 'Réinitialiser la goulotte' : 'Réinitialiser l\'équipement',
+                                                        onPressed: isDisabled ? null : _reinitialiserPosition, // Désactive l'action
+                                                      ),
+                                                    ),
+                                                  ),
                                                 ),
                                               ),
                                             );
@@ -1383,20 +1421,29 @@ class _EcranResultatState extends State<EcranResultat> {
                             
                             // Bouton d'activation du Mode Goulotte
                             Padding(
-                              padding: const EdgeInsets.only(bottom: 8.0),
-                              child: Material(
-                                color: _isDrawGoulotteMode ? Colors.teal : Colors.white.withValues(alpha: 0.9),
-                                shape: const CircleBorder(),
-                                elevation: 4,
-                                child: IconButton(
-                                  icon: Icon(Icons.format_paint, color: _isDrawGoulotteMode ? Colors.white : Colors.teal),
-                                  tooltip: 'Tracer une goulotte',
-                                  onPressed: _isProcessing ? null : () {
-                                    setState(() {
-                                      _isDrawGoulotteMode = !_isDrawGoulotteMode;
-                                      _isDraggingEquipementNotifier.value = false; 
-                                    });
-                                  },
+                              padding: const EdgeInsets.only(bottom: 12.0),
+                              child: Container(
+                                decoration: BoxDecoration(
+                                  shape: BoxShape.circle,
+                                  boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.15), blurRadius: 10, offset: const Offset(0, 4))],
+                                ),
+                                child: ClipOval(
+                                  child: BackdropFilter(
+                                    filter: ImageFilter.blur(sigmaX: 8, sigmaY: 8),
+                                    child: Container(
+                                      color: _isDrawGoulotteMode ? Colors.teal.withValues(alpha: 0.9) : Colors.white.withValues(alpha: 0.85),
+                                      child: IconButton(
+                                        icon: Icon(Icons.format_paint, color: _isDrawGoulotteMode ? Colors.white : Colors.teal),
+                                        tooltip: 'Tracer une goulotte',
+                                        onPressed: _isProcessing ? null : () {
+                                          setState(() {
+                                            _isDrawGoulotteMode = !_isDrawGoulotteMode;
+                                            _isDraggingEquipementNotifier.value = false; 
+                                          });
+                                        },
+                                      ),
+                                    ),
+                                  ),
                                 ),
                               ),
                             ),
@@ -1408,44 +1455,53 @@ class _EcranResultatState extends State<EcranResultat> {
                                 builder: (context, goulotteActuelle, _) {
                                   if (goulotteActuelle == null) return const SizedBox.shrink();
                                   return Padding(
-                                    padding: const EdgeInsets.only(bottom: 8.0),
-                                    child: Material(
-                                      color: Colors.white.withValues(alpha: 0.9),
-                                      shape: const CircleBorder(),
-                                      elevation: 4,
-                                      child: IconButton(
-                                        icon: const Icon(Icons.delete_outline),
-                                        color: Colors.red,
-                                        tooltip: 'Supprimer la goulotte',
-                                        onPressed: _isProcessing ? null : () {
-                                          // Sécurité pour éviter le missclick
-                                          showDialog(
-                                            context: context,
-                                            builder: (BuildContext context) {
-                                              return AlertDialog(
-                                                title: const Text("Supprimer la goulotte"),
-                                                content: const Text("Êtes-vous sûr de vouloir effacer cette goulotte ?"),
-                                                actions: [
-                                                  TextButton(
-                                                    onPressed: () => Navigator.of(context).pop(),
-                                                    child: const Text("Annuler", style: TextStyle(color: Colors.grey)),
-                                                  ),
-                                                  ElevatedButton(
-                                                    style: ElevatedButton.styleFrom(backgroundColor: Colors.red, foregroundColor: Colors.white),
-                                                    onPressed: () {
-                                                      Navigator.of(context).pop();
-                                                      _goulotteNotifier.value = null; // Vide la goulotte unique
-                                                      _goulotteInitiale = null; // On vide aussi l'historique
-                                                      // On force le recalcul uniquement de la goulotte (qui disparaît)
-                                                      _genererIncrustation(recomputeGoulotte: true, recomputeEquipement: false); 
-                                                    },
-                                                    child: const Text("Supprimer"),
-                                                  ),
-                                                ],
-                                              );
-                                            },
-                                          );
-                                        },
+                                    padding: const EdgeInsets.only(bottom: 12.0),
+                                    child: Container(
+                                      decoration: BoxDecoration(
+                                        shape: BoxShape.circle,
+                                        boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.15), blurRadius: 10, offset: const Offset(0, 4))],
+                                      ),
+                                      child: ClipOval(
+                                        child: BackdropFilter(
+                                          filter: ImageFilter.blur(sigmaX: 8, sigmaY: 8),
+                                          child: Container(
+                                            color: Colors.white.withValues(alpha: 0.85),
+                                            child: IconButton(
+                                              icon: const Icon(Icons.delete_outline),
+                                              color: Colors.red,
+                                              tooltip: 'Supprimer la goulotte',
+                                              onPressed: _isProcessing ? null : () {
+                                                // Sécurité pour éviter le missclick
+                                                showDialog(
+                                                  context: context,
+                                                  builder: (BuildContext context) {
+                                                    return AlertDialog(
+                                                      title: const Text("Supprimer la goulotte"),
+                                                      content: const Text("Êtes-vous sûr de vouloir effacer cette goulotte ?"),
+                                                      actions: [
+                                                        TextButton(
+                                                          onPressed: () => Navigator.of(context).pop(),
+                                                          child: const Text("Annuler", style: TextStyle(color: Colors.grey)),
+                                                        ),
+                                                        ElevatedButton(
+                                                          style: ElevatedButton.styleFrom(backgroundColor: Colors.red, foregroundColor: Colors.white),
+                                                          onPressed: () {
+                                                            Navigator.of(context).pop();
+                                                            _goulotteNotifier.value = null; // Vide la goulotte unique
+                                                            _goulotteInitiale = null; // On vide aussi l'historique
+                                                            // On force le recalcul uniquement de la goulotte (qui disparaît)
+                                                            _genererIncrustation(recomputeGoulotte: true, recomputeEquipement: false); 
+                                                          },
+                                                          child: const Text("Supprimer"),
+                                                        ),
+                                                      ],
+                                                    );
+                                                  },
+                                                );
+                                              },
+                                            ),
+                                          ),
+                                        ),
                                       ),
                                     ),
                                   );
@@ -1461,7 +1517,7 @@ class _EcranResultatState extends State<EcranResultat> {
 
             if (_pointsCibles != null && !_isManualPlacementMode) _buildCatalogue(),
 
-            const SizedBox(height: 80),
+            const SizedBox(height: 80), // Espace pour le FAB
           ],
         ),
       ),
@@ -1473,6 +1529,7 @@ class _EcranResultatState extends State<EcranResultat> {
               icon: const Icon(Icons.check),
               backgroundColor: Colors.blueAccent,
               foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)),
             )
           : (_imageResultatBytes != null && !_isProcessing)
               ? FloatingActionButton.extended(
@@ -1481,6 +1538,7 @@ class _EcranResultatState extends State<EcranResultat> {
                   icon: const Icon(Icons.download),
                   backgroundColor: Theme.of(context).colorScheme.primary,
                   foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)),
                 )
               : null,
       floatingActionButtonLocation: FloatingActionButtonLocation.centerFloat,
@@ -1532,14 +1590,19 @@ class _GoulottePainter extends CustomPainter {
 
     // Indicateurs nodaux (les ronds) pour montrer à l'utilisateur où grab/tirer la ligne
     if (showNodes) {
-      final paintHandle = Paint()..color = Colors.blueAccent;
-      final paintHandleBorder = Paint()..color = Colors.white..style = PaintingStyle.stroke..strokeWidth = 1.5; // Bordure plus fine
+      final paintHandle = Paint()..color = Colors.white; // Anneaux blancs au lieu de ronds bleus pleins
+      final paintHandleBorder = Paint()
+        ..color = Colors.teal
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 2.5; 
       
-      // Ronds plus petits (7.0 au lieu de 15.0) pour ne pas cacher les extrémités
-      canvas.drawCircle(p1, 7.0, paintHandle);
-      canvas.drawCircle(p1, 7.0, paintHandleBorder);
-      canvas.drawCircle(p2, 7.0, paintHandle);
-      canvas.drawCircle(p2, 7.0, paintHandleBorder);
+      List<Offset> nodes = [p1, p2];
+      for (var p in nodes) {
+        // Ombre portée sous le nœud
+        canvas.drawCircle(p, 9.0, Paint()..color = Colors.black26..maskFilter = const MaskFilter.blur(BlurStyle.normal, 3));
+        canvas.drawCircle(p, 8.0, paintHandle);
+        canvas.drawCircle(p, 8.0, paintHandleBorder);
+      }
     }
   }
 
@@ -1572,8 +1635,8 @@ class _BoundingBoxPainter extends CustomPainter {
     if (points.length != 4) return;
     
     final paint = Paint()
-      ..color = Colors.blueAccent
-      ..strokeWidth = 2.0
+      ..color = Colors.teal // Adapté à la charte graphique
+      ..strokeWidth = 3.0
       ..style = PaintingStyle.stroke;
       
     final path = Path()
@@ -1585,8 +1648,27 @@ class _BoundingBoxPainter extends CustomPainter {
       
     canvas.drawPath(path, paint);
 
+    // Dessine de légers crochets dans les angles pour un aspect viseur d'appareil photo
+    double cornerLength = 20.0;
+    final cornerPaint = Paint()..color = Colors.teal..strokeWidth = 5.0..style = PaintingStyle.stroke;
+    
+    for (int i = 0; i < 4; i++) {
+      Offset p = points[i];
+      Offset pNext = points[(i + 1) % 4];
+      Offset pPrev = points[(i + 3) % 4];
+      
+      Offset dNext = (pNext - p) / (pNext - p).distance;
+      Offset dPrev = (pPrev - p) / (pPrev - p).distance;
+      
+      Path cornerPath = Path()
+        ..moveTo(p.dx + dPrev.dx * cornerLength, p.dy + dPrev.dy * cornerLength)
+        ..lineTo(p.dx, p.dy)
+        ..lineTo(p.dx + dNext.dx * cornerLength, p.dy + dNext.dy * cornerLength);
+      canvas.drawPath(cornerPath, cornerPaint);
+    }
+
     final fillPaint = Paint()
-      ..color = Colors.blueAccent.withValues(alpha: 0.2)
+      ..color = Colors.teal.withValues(alpha: 0.15)
       ..style = PaintingStyle.fill;
     canvas.drawPath(path, fillPaint);
   }

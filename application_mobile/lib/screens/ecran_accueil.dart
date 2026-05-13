@@ -1,7 +1,10 @@
+import 'dart:async';
+import 'dart:ui'; // AJOUT : Nécessaire pour l'effet de flou (Glassmorphism)
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'package:camera/camera.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:sensors_plus/sensors_plus.dart';
 import '../utils/image_utils.dart';
 import '../services/ia_service.dart';
 import 'ecran_resultat.dart';
@@ -26,6 +29,13 @@ class _EcranAccueilState extends State<EcranAccueil> {
   /// Indique si les modèles d'IA sont prêts à être utilisés.
   bool _isIaReady = false;
 
+  // =========================================================================
+  // === VARIABLES POUR LE NIVEAU À BULLE ===
+  // =========================================================================
+  StreamSubscription<AccelerometerEvent>? _accelSubscription;
+  // Utilisation d'un ValueNotifier pour mettre à jour la bulle à 60fps sans faire ramer la caméra
+  final ValueNotifier<AccelerometerEvent?> _accelerometerNotifier = ValueNotifier(null);
+
   @override
   void initState() {
     super.initState();
@@ -47,6 +57,13 @@ class _EcranAccueilState extends State<EcranAccueil> {
         print("Erreur initialisation caméra : $e");
       });
     }
+
+    // Démarre l'écoute des capteurs d'inclinaison du téléphone
+    _accelSubscription = accelerometerEventStream().listen((AccelerometerEvent event) {
+      if (mounted) {
+        _accelerometerNotifier.value = event;
+      }
+    });
   }
 
   /// Charge les modèles d'IA et met à jour l'état pour activer les boutons.
@@ -63,6 +80,10 @@ class _EcranAccueilState extends State<EcranAccueil> {
   void dispose() {
     // Libère les ressources de la caméra lorsque l'écran est détruit pour éviter les fuites de mémoire.
     _controller?.dispose();
+    
+    // Ferme le flux du capteur pour économiser la batterie
+    _accelSubscription?.cancel();
+    _accelerometerNotifier.dispose();
     super.dispose();
   }
 
@@ -134,6 +155,7 @@ class _EcranAccueilState extends State<EcranAccueil> {
       appBar: AppBar(
         title: const Text('Choisir le mur'),
         backgroundColor: Theme.of(context).colorScheme.inversePrimary,
+        elevation: 0, // Design plus flat
       ),
       body: Stack(
         children: [
@@ -143,21 +165,43 @@ class _EcranAccueilState extends State<EcranAccueil> {
                 child: Container(
                   width: double.infinity,
                   margin: const EdgeInsets.all(16.0),
+                  // Ajout d'une ombre douce derrière la caméra
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(20),
+                    boxShadow: [
+                      BoxShadow(color: Colors.black.withValues(alpha: 0.1), blurRadius: 20, spreadRadius: 2)
+                    ],
+                  ),
                   child: ClipRRect(
-                    borderRadius: BorderRadius.circular(15),
+                    borderRadius: BorderRadius.circular(20),
                     child: _controller != null && _controller!.value.isInitialized
                         // Affiche le retour vidéo de la caméra si elle est prête.
-                        ? SizedBox(
-                            width: double.infinity,
-                            height: double.infinity,
-                            child: FittedBox(
-                              fit: BoxFit.cover,
-                              child: SizedBox(
-                                width: _controller!.value.previewSize?.height ?? 1,
-                                height: _controller!.value.previewSize?.width ?? 1,
-                                child: CameraPreview(_controller!),
+                        ? Stack(
+                            fit: StackFit.expand,
+                            children: [
+                              FittedBox(
+                                fit: BoxFit.cover,
+                                child: SizedBox(
+                                  width: _controller!.value.previewSize?.height ?? 1,
+                                  height: _controller!.value.previewSize?.width ?? 1,
+                                  child: CameraPreview(_controller!),
+                                ),
                               ),
-                            ),
+                              // Calque interactif du niveau à bulle
+                              ValueListenableBuilder<AccelerometerEvent?>(
+                                valueListenable: _accelerometerNotifier,
+                                builder: (context, event, child) {
+                                  // x = inclinaison latérale (gauche/droite)
+                                  // z = inclinaison d'avant en arrière (quand on tient le téléphone debout)
+                                  double xTilt = event?.x ?? 0.0;
+                                  double yTilt = event?.z ?? 0.0;
+                                  
+                                  return CustomPaint(
+                                    painter: _NiveauBullePainter(xTilt: xTilt, yTilt: yTilt),
+                                  );
+                                },
+                              ),
+                            ],
                           )
                         : const Center(child: CircularProgressIndicator()),
                   ),
@@ -178,9 +222,11 @@ class _EcranAccueilState extends State<EcranAccueil> {
                           icon: const Icon(Icons.photo_library),
                           label: const Text('Galerie'),
                           style: ElevatedButton.styleFrom(
+                            elevation: 0,
                             padding: const EdgeInsets.symmetric(horizontal: 30, vertical: 15),
-                            backgroundColor: Colors.white,
+                            backgroundColor: Colors.teal.withValues(alpha: 0.1), // Subtile touche de couleur
                             foregroundColor: Colors.teal,
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)), // Bouton très arrondi
                           ),
                         ),
                         ElevatedButton.icon(
@@ -188,9 +234,12 @@ class _EcranAccueilState extends State<EcranAccueil> {
                           icon: const Icon(Icons.camera_alt),
                           label: const Text('Photo'),
                           style: ElevatedButton.styleFrom(
+                            elevation: 4,
+                            shadowColor: Colors.teal.withValues(alpha: 0.4),
                             padding: const EdgeInsets.symmetric(horizontal: 30, vertical: 15),
                             backgroundColor: Theme.of(context).colorScheme.primary,
                             foregroundColor: Theme.of(context).colorScheme.onPrimary,
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)), // Bouton très arrondi
                           ),
                         ),
                       ],
@@ -215,21 +264,86 @@ class _EcranAccueilState extends State<EcranAccueil> {
           ),
           // Affiche un indicateur de chargement par-dessus l'interface pendant l'optimisation de l'image.
           if (_isOptimizing)
-            Container(
-              color: Colors.black54,
-              child: const Center(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    CircularProgressIndicator(color: Colors.white),
-                    SizedBox(height: 15),
-                    Text("Préparation...", style: TextStyle(color: Colors.white, fontSize: 16)),
-                  ],
+            // STYLE : Remplacement du fond noir par un bel effet de verre flouté (Glassmorphism)
+            BackdropFilter(
+              filter: ImageFilter.blur(sigmaX: 5.0, sigmaY: 5.0),
+              child: Container(
+                color: Colors.black.withValues(alpha: 0.4),
+                child: const Center(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      CircularProgressIndicator(color: Colors.white),
+                      SizedBox(height: 20),
+                      Text("Préparation de l'espace...", style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w500)),
+                    ],
+                  ),
                 ),
               ),
             ),
         ],
       ),
     );
+  }
+}
+
+// =========================================================================
+// === CLASSE UTILITAIRE : DESSIN DU NIVEAU À BULLE GYROSCOPIQUE ===
+// =========================================================================
+class _NiveauBullePainter extends CustomPainter {
+  final double xTilt;
+  final double yTilt;
+
+  _NiveauBullePainter({required this.xTilt, required this.yTilt});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final center = Offset(size.width / 2, size.height / 2);
+    
+    // Détermine si le téléphone est considéré comme "droit" (Tolérance de 0.5 d'accélération)
+    bool isAligned = xTilt.abs() < 0.6 && yTilt.abs() < 0.6;
+    
+    // 1. Dessin de la cible centrale (Le viseur fixe)
+    final targetColor = isAligned ? Colors.greenAccent : Colors.white.withValues(alpha: 0.6);
+    final targetPaint = Paint()
+      ..color = targetColor
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = isAligned ? 3.0 : 2.0;
+    
+    // Cercle central
+    canvas.drawCircle(center, 40.0, targetPaint);
+    
+    // Croix directrice (réticule)
+    canvas.drawLine(center - const Offset(55, 0), center - const Offset(15, 0), targetPaint);
+    canvas.drawLine(center + const Offset(15, 0), center + const Offset(55, 0), targetPaint);
+    canvas.drawLine(center - const Offset(0, 55), center - const Offset(0, 15), targetPaint);
+    canvas.drawLine(center + const Offset(0, 15), center + const Offset(0, 55), targetPaint);
+
+    // 2. Dessin de la bulle mobile (Indicateur de gravité)
+    // Multiplicateur pour rendre le mouvement plus ample sur l'écran
+    double sensitivity = 15.0; 
+    double maxRadius = 80.0; // Ne pas sortir trop loin du viseur
+    
+    // Calcul de la position de la bulle (Inversée pour suivre l'inclinaison physique naturelle)
+    double dx = (-xTilt * sensitivity).clamp(-maxRadius, maxRadius);
+    double dy = (-yTilt * sensitivity).clamp(-maxRadius, maxRadius);
+    Offset bubblePos = center + Offset(dx, dy);
+
+    final bubblePaint = Paint()
+      ..color = isAligned ? Colors.greenAccent : Colors.amber
+      ..style = PaintingStyle.fill;
+    
+    // Bulle avec un léger effet d'ombre pour ressortir
+    final shadowPaint = Paint()
+      ..color = Colors.black45
+      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 3.0);
+      
+    canvas.drawCircle(bubblePos, 12.0, shadowPaint);
+    canvas.drawCircle(bubblePos, 12.0, bubblePaint);
+  }
+
+  @override
+  bool shouldRepaint(covariant _NiveauBullePainter oldDelegate) {
+    return oldDelegate.xTilt != xTilt || oldDelegate.yTilt != yTilt;
   }
 }

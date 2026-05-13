@@ -41,6 +41,7 @@ dependencies:
   opencv_dart: ^2.2.1+4
   image_gallery_saver_plus: ^4.0.1
   path_provider: ^2.1.5
+  sensors_plus: ^7.0.0
 
 dev_dependencies:
   flutter_test:

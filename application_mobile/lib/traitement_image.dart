@@ -440,12 +440,20 @@ class TraitementImage {
       double eqCY = moments.m01 / (moments.m00 + 0.0001);
       
       // Le vecteur de fuite part du centre de l'image (effet de perspective photographique)
-      double vecX = eqCX - imgCX;
-      double vecY = eqCY - imgCY;
+      double vecX = imgCX - eqCX;
+      double vecY = imgCY - eqCY;
       
-      // L'extrusion dépend de la profondeur physique, mais est réduite (0.08 au lieu de 0.18) 
-      // pour que ça ne soit "pas abusé" pour les photos prises de face. Le volume sera subtil et élégant.
-      double baseExtrusion = (profondeurMm / 1000.0) * 0.08; 
+      // L'extrusion dépend de la profondeur physique
+      // AJOUT : La base d'extrusion est ajustée dynamiquement en fonction du ratio du bloc.
+      double baseExtrusion = (profondeurMm / 1000.0) * 0.14; 
+      
+      double ratioForme = hauteurMm / largeurMm;
+      if (ratioForme < 0.45) {
+          // Si c'est une clim murale (ratio très écrasé), on diminue l'extrusion 3D 
+          // pour éviter que les coques arrondies n'aient l'air d'être des boîtes épaisses.
+          baseExtrusion *= 0.45;
+      }
+
       int dxBack = (vecX * baseExtrusion).toInt();
       int dyBack = (vecY * baseExtrusion).toInt();
       
@@ -459,7 +467,7 @@ class TraitementImage {
       double mR = baseColorEq.val[2];
       
       // Simulation d'éclairage : La couleur s'adapte à la VRAIE couleur de la clim/unité !
-      // Les zones orientées vers le bas (colorBottom) sont légèrement plus sombres (0.55 au lieu de 0.75) pour un meilleur effet de volume.
+      // Les zones orientées vers le bas (colorBottom) sont légèrement plus sombres pour un meilleur effet de volume.
       cv.Scalar colorTop = cv.Scalar(mB * 0.98, mG * 0.98, mR * 0.98, 0);
       cv.Scalar colorBottom = cv.Scalar(mB * 0.55, mG * 0.55, mR * 0.55, 0); 
       cv.Scalar colorLeft = cv.Scalar(mB * 0.88, mG * 0.88, mR * 0.88, 0);
@@ -477,8 +485,13 @@ class TraitementImage {
       cv.bitwiseOR(sidesAlpha, backMaskAlpha, dst: sidesAlpha);
 
       // Dessin des murs latéraux reliant l'avant et l'arrière en suivant LE CONTOUR DU PNG
-      // C'est ce qui crée l'effet de volume 3D parfaitement moulé !
-      var contoursResult = cv.findContours(maskBinaire, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+      // AJOUT : On rétrécit (érode) le masque pour la construction des murs latéraux.
+      // Cela permet aux murs 3D d'être en LÉGER RETRAIT par rapport à la façade lisse de la machine, 
+      // réglant ainsi le problème du "contour trop marqué" des climatisations.
+      cv.Mat kernelShrink = cv.Mat.ones(5, 5, cv.MatType.CV_8UC1);
+      cv.Mat maskBinaireShrunk = cv.erode(maskBinaire, kernelShrink);
+
+      var contoursResult = cv.findContours(maskBinaireShrunk, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
       var contours = contoursResult.$1;
 
       for (int c = 0; c < contours.length; c++) {
@@ -496,23 +509,41 @@ class TraitementImage {
           double midX = (p1.x + p2.x) / 2.0;
           double midY = (p1.y + p2.y) / 2.0;
 
-          // Orientation du segment par rapport au centre de la machine
-          double nx = midX - eqCX;
-          double ny = midY - eqCY;
+          // Vecteur radial depuis le centre de la machine
+          double radX = midX - eqCX;
+          double radY = midY - eqCY;
+          
+          // On calcule la VRAIE perpendiculaire du contour !
+          double segDx = (p2.x - p1.x).toDouble();
+          double segDy = (p2.y - p1.y).toDouble();
+          
+          double nx = -segDy;
+          double ny = segDx;
+          
+          // On s'assure que la normale pointe vers l'extérieur
+          if ((nx * radX + ny * radY) < 0) {
+            nx = -nx;
+            ny = -ny;
+          }
+
           double len = math.sqrt(nx * nx + ny * ny) + 0.0001;
           nx /= len;
           ny /= len;
 
           cv.Scalar faceColor;
           // Détermination intelligente de la face pour appliquer la bonne lumière directionnelle
-          if (ny < -0.5) {
-            faceColor = colorTop;
-          } else if (ny > 0.5) {
-            faceColor = colorBottom;
-          } else if (nx < 0) {
-            faceColor = colorLeft;
+          if (ny.abs() > nx.abs()) {
+            if (ny < 0) {
+              faceColor = colorTop;
+            } else {
+              faceColor = colorBottom;
+            }
           } else {
-            faceColor = colorRight;
+            if (nx < 0) {
+              faceColor = colorLeft;
+            } else {
+              faceColor = colorRight;
+            }
           }
 
           var quad = [p1, p2, p2Back, p1Back];

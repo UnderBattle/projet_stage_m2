@@ -28,7 +28,12 @@ class MonApplication extends StatelessWidget {
       title: 'Simulateur d\'Installation', // Titre généralisé
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: Colors.teal),
+        // Utilisation d'un Teal plus profond et moderne pour l'UI globale
+        colorScheme: ColorScheme.fromSeed(
+          seedColor: const Color(0xFF00796B), 
+          primary: const Color(0xFF00796B),
+          surface: const Color(0xFFF5F7FA), // Fond très légèrement grisé pour faire ressortir le blanc
+        ),
         useMaterial3: true,
       ),
       // Passe la liste des caméras à l'écran d'accueil pour initialiser l'appareil photo.
