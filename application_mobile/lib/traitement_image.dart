@@ -339,9 +339,19 @@ class TraitementImage {
       int wMur = murMat.cols;
       int hMur = murMat.rows;
 
+      // =========================================================================
+      // === SOLUTION DE ROGNAGE (PADDING VIRTUEL) ===
+      // On agrandit l'espace de calcul de la 3D pour que l'équipement puisse 
+      // déborder hors de l'écran sans que ses contours 3D ne soient coupés net.
+      // =========================================================================
+      int pad = 300;
+      int wPad = wMur + pad * 2;
+      int hPad = hMur + pad * 2;
+
       double ratioX = wMur / 1024.0;
       double ratioY = hMur / 1024.0;
 
+      // Les points d'origine sont calculés pour correspondre à l'image non-padée
       List<cv.Point> ptsOri = pointsIA.map((pt) {
         return cv.Point((pt['x']! * ratioX).toInt(), (pt['y']! * ratioY).toInt());
       }).toList();
@@ -353,8 +363,6 @@ class TraitementImage {
       // =========================================================================
       cv.Mat equipementMat = cv.imdecode(equipementBytes, cv.IMREAD_UNCHANGED);
       
-      // OPTIMISATION : Détermine si l'équipement est de couleur sombre en analysant l'image source (petite taille)
-      // plutôt que l'image déformée (grande taille), ce qui est beaucoup plus rapide.
       var rawChannels = cv.split(equipementMat);
       cv.Mat rawAlpha = cv.threshold(rawChannels[3], 10, 255, cv.THRESH_BINARY).$2;
       cv.Mat rawBgr = cv.cvtColor(equipementMat, cv.COLOR_BGRA2BGR);
@@ -390,8 +398,11 @@ class TraitementImage {
         cv.Point((ptHg.x + vx + decalageX).toInt(), (ptHg.y + vy + decalageY).toInt())
       ];
 
+      // Translation des points vers le "Canvas Virtuel" (Padded)
+      List<cv.Point> ptsDstLissesPad = ptsDstLisses.map((p) => cv.Point(p.x + pad, p.y + pad)).toList();
+
       // =========================================================================
-      // === PHASE 3 : TAILLE REELLE ET DEFORMATION 3D ===
+      // === PHASE 3 : TAILLE REELLE ET DEFORMATION 3D SUR CANVAS PADDED ===
       // =========================================================================
       double hEquipementMm = hauteurMm;
       double wEquipementMm = largeurMm; 
@@ -409,89 +420,78 @@ class TraitementImage {
       ];
 
       var vecPtsSrc = cv.VecPoint.fromList(ptsSrc);
-      var vecPtsDst = cv.VecPoint.fromList(ptsDstLisses);
-      cv.Mat hMatrix = cv.getPerspectiveTransform(vecPtsSrc, vecPtsDst);
-      cv.Mat equipementWarped = cv.warpPerspective(equipementMat, hMatrix, (wMur, hMur));
-
-      var channels = cv.split(equipementWarped);
-      cv.Mat alphaMaskOriginale = channels[3]; 
-
-      cv.Mat alphaBinaire = cv.threshold(alphaMaskOriginale, 127, 255, cv.THRESH_BINARY).$2;
-      cv.Mat kernelErode = cv.Mat.ones(3, 3, cv.MatType.CV_8UC1);
-      cv.Mat alphaErode = cv.erode(alphaBinaire, kernelErode);
-      cv.Mat alphaMask = cv.gaussianBlur(alphaErode, (3, 3), 0.0);
+      var vecPtsDstPad = cv.VecPoint.fromList(ptsDstLissesPad);
+      cv.Mat hMatrixPad = cv.getPerspectiveTransform(vecPtsSrc, vecPtsDstPad);
       
-      cv.Mat equipementBgr = cv.cvtColor(equipementWarped, cv.COLOR_BGRA2BGR);
-      cv.Mat maskBinaire = cv.threshold(alphaMask, 5, 255, cv.THRESH_BINARY).$2;
+      // La projection se fait sur le GRAND canvas (wPad, hPad) pour ne rien couper
+      cv.Mat equipementWarpedPad = cv.warpPerspective(equipementMat, hMatrixPad, (wPad, hPad));
+
+      var channelsPad = cv.split(equipementWarpedPad);
+      cv.Mat alphaMaskOriginalePad = channelsPad[3]; 
+
+      cv.Mat alphaBinairePad = cv.threshold(alphaMaskOriginalePad, 127, 255, cv.THRESH_BINARY).$2;
+      cv.Mat kernelErode = cv.Mat.ones(3, 3, cv.MatType.CV_8UC1);
+      cv.Mat alphaErodePad = cv.erode(alphaBinairePad, kernelErode);
+      cv.Mat alphaMaskPad = cv.gaussianBlur(alphaErodePad, (3, 3), 0.0);
+      
+      cv.Mat equipementBgrPad = cv.cvtColor(equipementWarpedPad, cv.COLOR_BGRA2BGR);
+      cv.Mat maskBinairePad = cv.threshold(alphaMaskPad, 5, 255, cv.THRESH_BINARY).$2;
 
       // =========================================================================
       // === PHASE 3.5 : GÉNÉRATION DU VOLUME 3D (EXTRUSION EXACTE DU PNG) ===
       // =========================================================================
-      // Calcul du volume 3D basé sur le CONTOUR REEL du PNG (alpha mask)
-      // et non plus sur le rectangle de l'image. Cela permet d'avoir un volume 
-      // qui épouse parfaitement la forme de l'installation !
-
-      // On trouve le centre de l'image et le centre géométrique de la machine (via les moments)
-      double imgCX = wMur / 2.0;
-      double imgCY = hMur / 2.0;
+      var momentsPad = cv.moments(maskBinairePad);
+      double eqCXPad = momentsPad.m10 / (momentsPad.m00 + 0.0001);
+      double eqCYPad = momentsPad.m01 / (momentsPad.m00 + 0.0001);
       
-      var moments = cv.moments(maskBinaire);
-      double eqCX = moments.m10 / (moments.m00 + 0.0001);
-      double eqCY = moments.m01 / (moments.m00 + 0.0001);
+      // Le vecteur de fuite part du VRAI centre optique de la caméra 
+      // (décalé du padding pour correspondre au centre physique de la photo)
+      double imgCXPad = (wMur / 2.0) + pad;
+      double imgCYPad = (hMur / 2.0) + pad;
       
-      // Le vecteur de fuite part du centre de l'image (effet de perspective photographique)
-      double vecX = imgCX - eqCX;
-      double vecY = imgCY - eqCY;
+      double vecX = imgCXPad - eqCXPad;
+      double vecY = imgCYPad - eqCYPad;
       
       // L'extrusion dépend de la profondeur physique
-      // AJOUT : La base d'extrusion est ajustée dynamiquement en fonction du ratio du bloc.
       double baseExtrusion = (profondeurMm / 1000.0) * 0.14; 
       
       double ratioForme = hauteurMm / largeurMm;
       if (ratioForme < 0.45) {
           // Si c'est une clim murale (ratio très écrasé), on diminue l'extrusion 3D 
-          // pour éviter que les coques arrondies n'aient l'air d'être des boîtes épaisses.
           baseExtrusion *= 0.45;
       }
 
       int dxBack = (vecX * baseExtrusion).toInt();
       int dyBack = (vecY * baseExtrusion).toInt();
       
-      cv.Mat sidesBgr = cv.Mat.zeros(hMur, wMur, cv.MatType.CV_8UC3);
-      cv.Mat sidesAlpha = cv.Mat.zeros(hMur, wMur, cv.MatType.CV_8UC1);
+      cv.Mat sidesBgrPad = cv.Mat.zeros(hPad, wPad, cv.MatType.CV_8UC3);
+      cv.Mat sidesAlphaPad = cv.Mat.zeros(hPad, wPad, cv.MatType.CV_8UC1);
       
-      // Couleur moyenne de l'installation pour des ombres 3D réalistes (pas trop sombres)
-      cv.Scalar baseColorEq = cv.mean(equipementBgr, mask: maskBinaire);
+      cv.Scalar baseColorEq = cv.mean(equipementBgrPad, mask: maskBinairePad);
       double mB = baseColorEq.val[0];
       double mG = baseColorEq.val[1];
       double mR = baseColorEq.val[2];
       
-      // Simulation d'éclairage : La couleur s'adapte à la VRAIE couleur de la clim/unité !
-      // Les zones orientées vers le bas (colorBottom) sont légèrement plus sombres pour un meilleur effet de volume.
-      cv.Scalar colorTop = cv.Scalar(mB * 0.98, mG * 0.98, mR * 0.98, 0);
-      cv.Scalar colorBottom = cv.Scalar(mB * 0.55, mG * 0.55, mR * 0.55, 0); 
-      cv.Scalar colorLeft = cv.Scalar(mB * 0.88, mG * 0.88, mR * 0.88, 0);
-      cv.Scalar colorRight = cv.Scalar(mB * 0.85, mG * 0.85, mR * 0.85, 0);
+      cv.Scalar colorTop = cv.Scalar(mB, mG, mR, 0);
+      cv.Scalar colorBottom = cv.Scalar(mB * 0.60, mG * 0.60, mR * 0.60, 0); 
+      cv.Scalar colorLeft = cv.Scalar(mB * 0.89, mG * 0.89, mR * 0.89, 0);
+      cv.Scalar colorRight = cv.Scalar(mB * 0.89, mG * 0.89, mR * 0.89, 0);
 
-      // Dessin du "fond" du volume 3D (le capot arrière collé au mur)
-      // On translate simplement le masque alpha parfait de la machine
-      cv.Mat affineBack = cv.getAffineTransform(
+      // Dessin du "fond" du volume 3D
+      cv.Mat affineBackPad = cv.getAffineTransform(
         cv.VecPoint.fromList([cv.Point(0, 0), cv.Point(10, 0), cv.Point(0, 10)]),
         cv.VecPoint.fromList([cv.Point(dxBack, dyBack), cv.Point(10 + dxBack, dyBack), cv.Point(dxBack, 10 + dyBack)])
       );
-      cv.Mat backMaskAlpha = cv.warpAffine(maskBinaire, affineBack, (wMur, hMur));
-      cv.Mat backCapBgr = cv.Mat.zeros(hMur, wMur, cv.MatType.CV_8UC3)..setTo(colorBottom); 
-      backCapBgr.copyTo(sidesBgr, mask: backMaskAlpha);
-      cv.bitwiseOR(sidesAlpha, backMaskAlpha, dst: sidesAlpha);
+      cv.Mat backMaskAlphaPad = cv.warpAffine(maskBinairePad, affineBackPad, (wPad, hPad));
+      cv.Mat backCapBgrPad = cv.Mat.zeros(hPad, wPad, cv.MatType.CV_8UC3)..setTo(colorBottom); 
+      backCapBgrPad.copyTo(sidesBgrPad, mask: backMaskAlphaPad);
+      cv.bitwiseOR(sidesAlphaPad, backMaskAlphaPad, dst: sidesAlphaPad);
 
-      // Dessin des murs latéraux reliant l'avant et l'arrière en suivant LE CONTOUR DU PNG
-      // AJOUT : On rétrécit (érode) le masque pour la construction des murs latéraux.
-      // Cela permet aux murs 3D d'être en LÉGER RETRAIT par rapport à la façade lisse de la machine, 
-      // réglant ainsi le problème du "contour trop marqué" des climatisations.
+      // Murs latéraux en retrait (érosion)
       cv.Mat kernelShrink = cv.Mat.ones(5, 5, cv.MatType.CV_8UC1);
-      cv.Mat maskBinaireShrunk = cv.erode(maskBinaire, kernelShrink);
+      cv.Mat maskBinaireShrunkPad = cv.erode(maskBinairePad, kernelShrink);
 
-      var contoursResult = cv.findContours(maskBinaireShrunk, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+      var contoursResult = cv.findContours(maskBinaireShrunkPad, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
       var contours = contoursResult.$1;
 
       for (int c = 0; c < contours.length; c++) {
@@ -509,18 +509,15 @@ class TraitementImage {
           double midX = (p1.x + p2.x) / 2.0;
           double midY = (p1.y + p2.y) / 2.0;
 
-          // Vecteur radial depuis le centre de la machine
-          double radX = midX - eqCX;
-          double radY = midY - eqCY;
+          double radX = midX - eqCXPad;
+          double radY = midY - eqCYPad;
           
-          // On calcule la VRAIE perpendiculaire du contour !
           double segDx = (p2.x - p1.x).toDouble();
           double segDy = (p2.y - p1.y).toDouble();
           
           double nx = -segDy;
           double ny = segDx;
           
-          // On s'assure que la normale pointe vers l'extérieur
           if ((nx * radX + ny * radY) < 0) {
             nx = -nx;
             ny = -ny;
@@ -531,7 +528,6 @@ class TraitementImage {
           ny /= len;
 
           cv.Scalar faceColor;
-          // Détermination intelligente de la face pour appliquer la bonne lumière directionnelle
           if (ny.abs() > nx.abs()) {
             if (ny < 0) {
               faceColor = colorTop;
@@ -547,36 +543,31 @@ class TraitementImage {
           }
 
           var quad = [p1, p2, p2Back, p1Back];
-          cv.fillPoly(sidesBgr, cv.VecVecPoint.fromList([quad]), faceColor, lineType: cv.LINE_AA);
-          cv.fillPoly(sidesAlpha, cv.VecVecPoint.fromList([quad]), cv.Scalar.all(255), lineType: cv.LINE_AA);
+          cv.fillPoly(sidesBgrPad, cv.VecVecPoint.fromList([quad]), faceColor, lineType: cv.LINE_AA);
+          cv.fillPoly(sidesAlphaPad, cv.VecVecPoint.fromList([quad]), cv.Scalar.all(255), lineType: cv.LINE_AA);
         }
       }
 
-      // Un flou plus fort sur les couleurs pour adoucir les transitions 
-      // entre les faces (haut clair, bas sombre) et créer un dégradé naturel (effet biseauté).
-      cv.Mat sidesBgrSmooth = cv.gaussianBlur(sidesBgr, (15, 15), 0.0);
-      cv.Mat sidesAlphaSmooth = cv.gaussianBlur(sidesAlpha, (3, 3), 0.0);
+      cv.Mat sidesBgrSmoothPad = cv.gaussianBlur(sidesBgrPad, (15, 15), 0.0);
+      cv.Mat sidesAlphaSmoothPad = cv.gaussianBlur(sidesAlphaPad, (3, 3), 0.0);
       
-      // Masque global englobant le volume 3D + la face avant
-      cv.Mat maskTotalVolume = cv.add(maskBinaire, sidesAlpha);
-      cv.Mat alphaMaskTotal = cv.add(alphaMask, sidesAlphaSmooth);
+      cv.Mat maskTotalVolumePad = cv.add(maskBinairePad, sidesAlphaPad);
+      cv.Mat alphaMaskTotalPad = cv.add(alphaMaskPad, sidesAlphaSmoothPad);
 
-      cv.Mat equipement3DBgr = sidesBgrSmooth.clone();
-      // On plaque l'image frontale exacte par dessus les murs 3D pour refermer la boîte
-      equipementBgr.copyTo(equipement3DBgr, mask: maskBinaire);
-      
-      equipementBgr = equipement3DBgr; 
+      cv.Mat equipement3DBgrPad = sidesBgrSmoothPad.clone();
+      equipementBgrPad.copyTo(equipement3DBgrPad, mask: maskBinairePad);
 
       // =========================================================================
       // === PHASE 4 : CALCUL DE LA DIRECTION DE LA LUMIERE ET OMBRE PROGRESSIVE ===
       // =========================================================================
+      // Le calcul de la lumière de la pièce se fait sur l'image ORIGINALE (non paddée)
       cv.Mat grayMur = cv.cvtColor(resultImg, cv.COLOR_BGR2GRAY);
-      
       int downscaleSobel = 32;
       cv.Mat grayMurSmall = cv.resize(grayMur, (wMur ~/ downscaleSobel, hMur ~/ downscaleSobel));
       
-      // L'ombre portée est maintenant calculée par rapport au volume total ! (Plus de boîte qui flotte)
-      cv.Mat maskBinaireSmall = cv.resize(maskTotalVolume, (wMur ~/ downscaleSobel, hMur ~/ downscaleSobel));
+      // On découpe temporairement le masque pour qu'il matche la taille du mur
+      cv.Mat maskTotalVolumeOrig = maskTotalVolumePad.region(cv.Rect(pad, pad, wMur, hMur));
+      cv.Mat maskBinaireSmall = cv.resize(maskTotalVolumeOrig, (wMur ~/ downscaleSobel, hMur ~/ downscaleSobel));
 
       var meanStdDev = cv.meanStdDev(grayMurSmall);
       double lumiereMoyenneMur = meanStdDev.$1.val[0];
@@ -602,40 +593,50 @@ class TraitementImage {
 
       double ratioVolume = profondeurMm / 100.0; 
       double forceOmbre = 12.0 * ratioVolume; 
-      
       double longueurOmbre = forceOmbre * ratioContraste;
 
       double shiftX = norme < 1.0 ? (3.0 * ratioVolume) : -dirLumiereX * longueurOmbre;
       double shiftY = norme < 1.0 ? (8.0 * ratioVolume) : -dirLumiereY * longueurOmbre;
 
+      // Création de l'ombre dans l'espace "Padded" pour ne pas la couper si elle sort de l'écran
       var srcPts = cv.VecPoint.fromList([cv.Point(0, 0), cv.Point(10, 0), cv.Point(0, 10)]);
-      
       var dstPtsDir = cv.VecPoint.fromList([cv.Point(shiftX.toInt(), shiftY.toInt()), cv.Point(10 + shiftX.toInt(), shiftY.toInt()), cv.Point(shiftX.toInt(), 10 + shiftY.toInt())]);
       cv.Mat affineMatDir = cv.getAffineTransform(srcPts, dstPtsDir);
       
-      // On projette l'ombre à partir du volume TOTAL pour éviter l'effet "boîte flottante"
-      cv.Mat alphaOmbre = cv.warpAffine(alphaMaskTotal, affineMatDir, (wMur, hMur));
+      cv.Mat alphaOmbrePad = cv.warpAffine(alphaMaskTotalPad, affineMatDir, (wPad, hPad));
+      cv.Mat smallAlphaPad = cv.resize(alphaOmbrePad, (wPad ~/ 4, hPad ~/ 4));
       
-      cv.Mat smallAlpha = cv.resize(alphaOmbre, (wMur ~/ 4, hMur ~/ 4));
       int baseBlur = (5 + (ratioVolume * 4) + ((1.0 - ratioContraste) * 8)).toInt();
       if (baseBlur % 2 == 0) baseBlur += 1; 
       
-      cv.Mat smallOmbreFloue = cv.gaussianBlur(smallAlpha, (baseBlur, baseBlur), 0.0);
-      cv.Mat ombreFloueDirectionnelle = cv.resize(smallOmbreFloue, (wMur, hMur), interpolation: cv.INTER_CUBIC);
+      cv.Mat smallOmbreFlouePad = cv.gaussianBlur(smallAlphaPad, (baseBlur, baseBlur), 0.0);
+      cv.Mat ombreFloueDirectionnellePad = cv.resize(smallOmbreFlouePad, (wPad, hPad), interpolation: cv.INTER_CUBIC);
 
       var dstPtsContact = cv.VecPoint.fromList([cv.Point(0, 3), cv.Point(10, 3), cv.Point(0, 13)]);
       cv.Mat affineMatContact = cv.getAffineTransform(srcPts, dstPtsContact);
-      cv.Mat alphaContact = cv.warpAffine(alphaMaskTotal, affineMatContact, (wMur, hMur));
+      cv.Mat alphaContactPad = cv.warpAffine(alphaMaskTotalPad, affineMatContact, (wPad, hPad));
       
-      cv.Mat smallContact = cv.resize(alphaContact, (wMur ~/ 4, hMur ~/ 4));
-      cv.Mat smallContactFlou = cv.gaussianBlur(smallContact, (3, 3), 0.0);
-      cv.Mat ombreFloueContact = cv.resize(smallContactFlou, (wMur, hMur), interpolation: cv.INTER_CUBIC);
+      cv.Mat smallContactPad = cv.resize(alphaContactPad, (wPad ~/ 4, hPad ~/ 4));
+      cv.Mat smallContactFlouPad = cv.gaussianBlur(smallContactPad, (3, 3), 0.0);
+      cv.Mat ombreFloueContactPad = cv.resize(smallContactFlouPad, (wPad, hPad), interpolation: cv.INTER_CUBIC);
 
-      cv.Mat ombreDir8u = ombreFloueDirectionnelle.convertTo(cv.MatType.CV_8UC1, alpha: reglageOmbreDirBase);
-      cv.Mat ombreContact8u = ombreFloueContact.convertTo(cv.MatType.CV_8UC1, alpha: reglageOmbreContact);
+      cv.Mat ombreDir8uPad = ombreFloueDirectionnellePad.convertTo(cv.MatType.CV_8UC1, alpha: reglageOmbreDirBase);
+      cv.Mat ombreContact8uPad = ombreFloueContactPad.convertTo(cv.MatType.CV_8UC1, alpha: reglageOmbreContact);
       
-      // Masque d'ombre pure (0 = pas d'ombre, >0 = ombre)
-      cv.Mat ombreTotale = cv.add(ombreDir8u, ombreContact8u);
+      cv.Mat ombreTotalePad = cv.add(ombreDir8uPad, ombreContact8uPad);
+
+      // =========================================================================
+      // === LE GRAND DÉCOUPAGE (RETOUR À LA TAILLE DE L'ÉCRAN) ===
+      // On retire la marge de 300px. L'image a pu déborder sans être "écrasée" 
+      // et elle est maintenant recadrée parfaitement.
+      // =========================================================================
+      cv.Rect cropRect = cv.Rect(pad, pad, wMur, hMur);
+      
+      cv.Mat equipementBgr = equipement3DBgrPad.region(cropRect).clone();
+      cv.Mat maskTotalVolume = maskTotalVolumePad.region(cropRect).clone();
+      cv.Mat alphaMaskTotal = alphaMaskTotalPad.region(cropRect).clone();
+      cv.Mat ombreTotale = ombreTotalePad.region(cropRect).clone();
+      maskBinairePad.region(cropRect).clone();
 
       // =========================================================================
       // === PHASE 5 : LUMIERE ET TEMPERATURE DE COULEUR INTELLIGENTE ===
@@ -648,8 +649,6 @@ class TraitementImage {
       final double reglageInfluenceOmbreSurBlanc = 0.65;
       final double reglageInfluenceOmbreSurNoir = 0.21;  
       
-      // AJUSTEMENT DE L'EBLOUISSEMENT : On baisse le multiplicateur de base et le plafond
-      // pour éviter que l'équipement ou la goulotte ne brille trop sur un mur sans ombre.
       double ratioLuminositeAmbiante = (lumiereMoyenneMur / 128.0).clamp(0.7, 1.0);
       final double reglageLuminositeEquipementBlanc = 0.95 * ratioLuminositeAmbiante; 
       final double reglageLuminositeEquipementNoir = 0.78;   
@@ -659,7 +658,6 @@ class TraitementImage {
       cv.Mat murLisse = cv.resize(murUltraFlou, (wMur, hMur), interpolation: cv.INTER_CUBIC);
 
       cv.Scalar meanMurGlobal = cv.mean(murLisse);
-      // La lumière est analysée sur le mur se trouvant derrière l'ENSEMBLE de la machine
       cv.Scalar meanMurSousEquipement = cv.mean(murLisse, mask: maskTotalVolume);
 
       double bMur = (meanMurGlobal.val[0] * reglageMixAmbiancePiece) + (meanMurSousEquipement.val[0] * reglageMixCouleurMur);
@@ -714,7 +712,6 @@ class TraitementImage {
          vShadowedF = vShadowedF.convertTo(cv.MatType.CV_32FC1, alpha: reglageLuminositeEquipementBlanc); 
       }
 
-      // La correction du contre-jour englobe le volume total, pas seulement la face
       cv.Rect rectEquipement = cv.boundingRect(cv.VecPoint.fromList(ptsDstLisses));
       int rx = math.max(0, rectEquipement.x - 20);
       int ry = math.max(0, rectEquipement.y - 20);
@@ -726,25 +723,12 @@ class TraitementImage {
       if (rw > 0 && rh > 0) {
         cv.Mat roiMurGray = grayMur.region(cv.Rect(rx, ry, rw, rh));
         var minMaxRoi = cv.minMaxLoc(roiMurGray);
-        double minLocal = minMaxRoi.$1;
-        double maxLocal = minMaxRoi.$2;
-        
-        double contrasteLocal = math.max(0.0, maxLocal - minLocal);
-        
-        double forceLevelLift = (ecartTypeMur / 40.0).clamp(0.3, 1.0);
-        voileAtmospherique = (contrasteLocal * 0.15); 
-        
-        if (estEquipementNoir) {
-           voileAtmospherique = math.min(voileAtmospherique, 8.0); 
-        } else {
-           voileAtmospherique = math.min(voileAtmospherique, 25.0); 
-        }
-        voileAtmospherique *= forceLevelLift;
+        double contrasteLocal = math.max(0.0, minMaxRoi.$2 - minMaxRoi.$1);
+        voileAtmospherique = math.min(contrasteLocal * 0.15, 25.0);
       }
-
+      
       double ratioLift = (255.0 - voileAtmospherique) / 255.0;
       cv.Mat vLiftedF = cv.addWeighted(vShadowedF, ratioLift, vShadowedF, 0.0, voileAtmospherique);
-
       cv.Mat vCappedF = cv.threshold(vLiftedF, 245.0, 245.0, cv.THRESH_TRUNC).$2;
       hsvChannels[2] = vCappedF.convertTo(cv.MatType.CV_8UC1);
 
@@ -758,7 +742,6 @@ class TraitementImage {
 
       cv.Mat equipementFloat = equipementBrouillee.convertTo(cv.MatType.CV_32FC3);
       cv.Mat noise = cv.Mat.zeros(hMur, wMur, cv.MatType.CV_32FC3);
-      
       cv.randn(noise, cv.Scalar.all(0.0), cv.Scalar.all(8.0)); 
       cv.Mat equipementNoisyFloat = cv.add(equipementFloat, noise);
       
@@ -767,13 +750,9 @@ class TraitementImage {
       // =========================================================================
       // === PHASE 6 : CREATION DU CALQUE PNG TRANSPARENT (SECURISE) ===
       // =========================================================================
-      // On combine l'Alpha de l'équipement avec l'intensité de l'Ombre pour créer 
-      // un PNG transparent autonome qu'on mettra en cache.
-      
       cv.Mat alphaMaskF = alphaMaskTotal.convertTo(cv.MatType.CV_32FC1, alpha: 1.0 / 255.0);
       cv.Mat ombreF = ombreTotale.convertTo(cv.MatType.CV_32FC1, alpha: 1.0 / 255.0);
       
-      // Sécurité : On utilise cv.Mat.zeros et setTo pour avoir un fond 1.0 parfait.
       cv.Mat matriceUnAlpha = cv.Mat.zeros(hMur, wMur, cv.MatType.CV_32FC1)..setTo(cv.Scalar.all(1.0));
       cv.Mat invAlphaMaskF = cv.subtract(matriceUnAlpha, alphaMaskF);
       cv.Mat shadowAlphaF = cv.multiply(invAlphaMaskF, ombreF);
@@ -784,10 +763,9 @@ class TraitementImage {
       cv.Mat bgrFinal = cv.Mat.zeros(hMur, wMur, cv.MatType.CV_8UC3);
       equipementRgbFinal.copyTo(bgrFinal, mask: alphaMaskTotal);
 
-      // Sécurité ultime pour le canal Alpha sans utiliser d'array dynamique (qui crashait)
       cv.Mat bgraFinal = cv.cvtColor(bgrFinal, cv.COLOR_BGR2BGRA);
       var bgraChannels = cv.split(bgraFinal);
-      bgraChannels[3] = finalAlpha8u; // Remplacement direct du canal Alpha
+      bgraChannels[3] = finalAlpha8u; 
       cv.Mat finalImage = cv.merge(bgraChannels);
 
       var encodeResult = cv.imencode('.png', finalImage);
