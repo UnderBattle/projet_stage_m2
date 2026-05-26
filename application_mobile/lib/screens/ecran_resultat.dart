@@ -388,8 +388,8 @@ class _EcranResultatState extends State<EcranResultat> {
           'decalageY': _decalageNotifier.value.dy,
           'equipementAssetPath': equipementPath,
           'profondeurMm': profondeur,
-          'hauteurMm': hauteur, 
-          'largeurMm': largeur, 
+          'hauteurMm': hauteur,
+          'largeurMm': largeur,
         });
       }
 
@@ -583,7 +583,7 @@ class _EcranResultatState extends State<EcranResultat> {
           angle: angle,
           alignment: Alignment.centerLeft,
           child: GestureDetector(
-            behavior: HitTestBehavior.opaque,
+            behavior: HitTestBehavior.translucent,
             onPanStart: (_) {
               if (_activePointers > 1) return;
               _isDraggingGoulotteNotifier.value = true;
@@ -644,7 +644,7 @@ class _EcranResultatState extends State<EcranResultat> {
         left: p1.dx - 25,
         top: p1.dy - 25,
         child: GestureDetector(
-          behavior: HitTestBehavior.opaque,
+          behavior: HitTestBehavior.translucent,
           onPanStart: (_) {
             if (_activePointers > 1) return;
             _isDraggingGoulotteNotifier.value = true;
@@ -690,7 +690,7 @@ class _EcranResultatState extends State<EcranResultat> {
         left: p2.dx - 25,
         top: p2.dy - 25,
         child: GestureDetector(
-          behavior: HitTestBehavior.opaque,
+          behavior: HitTestBehavior.translucent,
           onPanStart: (_) {
             if (_activePointers > 1) return;
             _isDraggingGoulotteNotifier.value = true;
@@ -998,7 +998,7 @@ class _EcranResultatState extends State<EcranResultat> {
                 if (goulotte == null) {
                   // A - Mode plein écran pour tracer la toute première goulotte
                   return GestureDetector(
-                    behavior: HitTestBehavior.opaque,
+                    behavior: HitTestBehavior.translucent,
                     onPanStart: (details) {
                       if (_activePointers > 1) return;
                       // On garde la trace initiale sans provoquer la disparition de la zone tactile
@@ -1113,33 +1113,6 @@ class _EcranResultatState extends State<EcranResultat> {
             );
           }
         ),
-
-        if (_isProcessing)
-          ValueListenableBuilder<bool>(
-            valueListenable: _isDraggingEquipementNotifier,
-            builder: (context, isDragging, _) {
-               if (isDragging) return const SizedBox.shrink(); 
-               return Positioned.fill(
-                // STYLE : Remplacement du fond noir par un effet verre dépoli élégant
-                child: BackdropFilter(
-                  filter: ImageFilter.blur(sigmaX: 5.0, sigmaY: 5.0),
-                  child: Container(
-                    color: Colors.black.withValues(alpha: 0.4),
-                    child: Center(
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          const CircularProgressIndicator(color: Colors.white),
-                          const SizedBox(height: 20),
-                          Text(_loadingMessage, style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w500), textAlign: TextAlign.center),
-                        ],
-                      )
-                    )
-                  ),
-                ),
-              );
-            }
-          ),
       ],
     );
   }
@@ -1317,18 +1290,7 @@ class _EcranResultatState extends State<EcranResultat> {
                               child: LayoutBuilder(
                                 builder: (context, constraints) {
                                   if (_imageWidth == null || _imageHeight == null) {
-                                     return _isProcessing
-                                         ? Center(
-                                            child: Column(
-                                              mainAxisSize: MainAxisSize.min,
-                                              children: [
-                                                const CircularProgressIndicator(),
-                                                const SizedBox(height: 16),
-                                                Text(_loadingMessage, style: const TextStyle(fontWeight: FontWeight.bold)),
-                                              ],
-                                            ),
-                                          )
-                                        : Image.file(File(widget.photoPath), fit: BoxFit.contain);
+                                     return Image.file(File(widget.photoPath), fit: BoxFit.contain);
                                   }
 
                                   if (_pointsCibles == null && !_isManualPlacementMode) {
@@ -1508,6 +1470,36 @@ class _EcranResultatState extends State<EcranResultat> {
                                 }
                               ),
                           ],
+                        ),
+                      ),
+
+                    // Affichage du chargement par dessus tout (hors de l'InteractiveViewer pour ne pas être zoomé)
+                    if (_isProcessing)
+                      Positioned.fill(
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(20),
+                          child: ValueListenableBuilder<bool>(
+                            valueListenable: _isDraggingEquipementNotifier,
+                            builder: (context, isDragging, _) {
+                               if (isDragging) return const SizedBox.shrink(); 
+                               return BackdropFilter(
+                                filter: ImageFilter.blur(sigmaX: 5.0, sigmaY: 5.0),
+                                child: Container(
+                                  color: Colors.black.withValues(alpha: 0.4),
+                                  child: Center(
+                                    child: Column(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        const CircularProgressIndicator(color: Colors.white),
+                                        const SizedBox(height: 20),
+                                        Text(_loadingMessage, style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w500), textAlign: TextAlign.center),
+                                      ],
+                                    )
+                                  )
+                                ),
+                              );
+                            }
+                          ),
                         ),
                       ),
                   ],

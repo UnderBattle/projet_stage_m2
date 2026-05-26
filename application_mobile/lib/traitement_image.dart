@@ -573,10 +573,11 @@ class TraitementImage {
       double lumiereMoyenneMur = meanStdDev.$1.val[0];
       double ecartTypeMur = meanStdDev.$2.val[0]; 
 
-      double ratioContraste = (ecartTypeMur / 50.0).clamp(0.2, 1.2); 
+      double ratioContraste = (ecartTypeMur / 50.0).clamp(0.2, 1.2);
 
-      final double reglageOmbreDirBase = 0.12 * ratioContraste; 
-      final double reglageOmbreContact = 0.25 * ratioContraste;  
+      // Réglages d'intensité des ombres directionnelles et de contact, ajustés dynamiquement en fonction du contraste de la pièce.
+      final double reglageOmbreDirBase = 0.12 * ratioContraste;
+      final double reglageOmbreContact = 0.25 * ratioContraste;
 
       cv.Mat grayMurFlou = cv.gaussianBlur(grayMurSmall, (7, 7), 0.0);
       cv.Mat sobelX = cv.sobel(grayMurFlou, cv.MatType.CV_32F, 1, 0, ksize: 3);
@@ -966,8 +967,8 @@ class TraitementImage {
       double tintG = gMur / lumMurLocal;
       double tintR = rMur / lumMurLocal;
 
-      // La goulotte blanche absorbe la teinte de la pièce à hauteur de 35%
-      double forceTeinteGoulotte = 0.35;
+      // La goulotte blanche absorbe la teinte de la pièce
+      double forceTeinteGoulotte = 0.20;
       tintB = 1.0 + (tintB - 1.0) * forceTeinteGoulotte;
       tintG = 1.0 + (tintG - 1.0) * forceTeinteGoulotte;
       tintR = 1.0 + (tintR - 1.0) * forceTeinteGoulotte;
