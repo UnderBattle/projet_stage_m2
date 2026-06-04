@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:camera/camera.dart';
 import 'screens/ecran_accueil.dart';
+import 'utils/image_utils.dart';
 
 /// Liste globale contenant les caméras disponibles sur l'appareil.
 List<CameraDescription> cameras = [];
@@ -9,6 +10,8 @@ List<CameraDescription> cameras = [];
 /// Initialise le framework Flutter et tente de récupérer les caméras avant de lancer l'interface.
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  nettoyerCacheImages();
+
   try {
     cameras = await availableCameras();
   } on CameraException catch (e) {

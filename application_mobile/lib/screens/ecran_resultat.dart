@@ -1,6 +1,6 @@
 import 'dart:io';
 import 'dart:math' as math;
-import 'dart:ui'; // AJOUT : Pour les effets de flou Glassmorphism
+import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'package:image_gallery_saver_plus/image_gallery_saver_plus.dart';

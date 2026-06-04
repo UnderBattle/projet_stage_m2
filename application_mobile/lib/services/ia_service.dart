@@ -26,11 +26,21 @@ class IAService {
       print("[IAService] Début du chargement des modèles IA en arrière-plan...");
       final interpreterOptions = InterpreterOptions();
       
-      // Ajoute un delegate pour optimiser les performances selon la plateforme.
       if (Platform.isAndroid) {
-        interpreterOptions.addDelegate(XNNPackDelegate()); 
+        try {
+          // On tente de forcer l'accélération GPU (GpuDelegateV2 est spécifique à Android)
+          interpreterOptions.addDelegate(GpuDelegateV2()); 
+          print("[IAService] Accélération GPU Android (GpuDelegateV2) activée !");
+        } catch (e) {
+          // Fallback de sécurité : si le téléphone est trop vieux ou ne supporte pas l'API, 
+          // on repasse sur le CPU optimisé (XNNPack).
+          print("[IAService] Le GPU n'est pas supporté par ce téléphone, fallback sur CPU (XNNPack).");
+          interpreterOptions.addDelegate(XNNPackDelegate()); 
+        }
       } else if (Platform.isIOS) {
+        // Sur iOS, l'API Metal est utilisée par défaut avec GpuDelegate
         interpreterOptions.addDelegate(GpuDelegate());
+        print("[IAService] Accélération GPU iOS (Metal) activée !");
       }
 
       // Chargement de YOLO
