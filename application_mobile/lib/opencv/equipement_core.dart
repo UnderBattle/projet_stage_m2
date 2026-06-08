@@ -192,19 +192,10 @@ class EquipementCore {
       var contoursResult = cv.findContours(maskBinaireShrunkPad, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
       var contours = contoursResult.$1;
 
-      // Initialisation des listes pour regrouper les faces
-      List<List<cv.Point>> quadsTop = [];
-      List<List<cv.Point>> quadsBottom = [];
-      List<List<cv.Point>> quadsLeft = [];
-      List<List<cv.Point>> quadsRight = [];
-      List<List<cv.Point>> quadsAll = [];
-
       for (int c = 0; c < contours.length; c++) {
         var contour = contours[c];
         
-        // Simplification du contour pour retirer les points redondants
-        var approxContour = cv.approxPolyDP(contour, 1.5, true);
-        List<cv.Point> ptList = approxContour.toList();
+        List<cv.Point> ptList = contour.toList();
         int numPts = ptList.length;
 
         for (int i = 0; i < numPts; i++) {
@@ -235,41 +226,25 @@ class EquipementCore {
           nx /= len;
           ny /= len;
 
-          var quad = [p1, p2, p2Back, p1Back];
-          quadsAll.add(quad);
-
-          // Tri du quadrilatère dans la bonne liste de couleur
+          cv.Scalar faceColor;
           if (ny.abs() > nx.abs()) {
             if (ny < 0) {
-              quadsTop.add(quad);
+              faceColor = colorTop;
             } else {
-              quadsBottom.add(quad);
+              faceColor = colorBottom;
             }
           } else {
             if (nx < 0) {
-              quadsLeft.add(quad);
+              faceColor = colorLeft;
             } else {
-              quadsRight.add(quad);
+              faceColor = colorRight;
             }
           }
-        }
-      }
 
-      // Appels groupés ultra-rapides au C++ d'OpenCV
-      if (quadsTop.isNotEmpty) {
-        cv.fillPoly(sidesBgrPad, cv.VecVecPoint.fromList(quadsTop), colorTop);
-      }
-      if (quadsBottom.isNotEmpty) {
-        cv.fillPoly(sidesBgrPad, cv.VecVecPoint.fromList(quadsBottom), colorBottom);
-      }
-      if (quadsLeft.isNotEmpty) {
-        cv.fillPoly(sidesBgrPad, cv.VecVecPoint.fromList(quadsLeft), colorLeft);
-      }
-      if (quadsRight.isNotEmpty) {
-        cv.fillPoly(sidesBgrPad, cv.VecVecPoint.fromList(quadsRight), colorRight);
-      }
-      if (quadsAll.isNotEmpty) {
-        cv.fillPoly(sidesAlphaPad, cv.VecVecPoint.fromList(quadsAll), cv.Scalar.all(255));
+          var quad = [p1, p2, p2Back, p1Back];
+          cv.fillPoly(sidesBgrPad, cv.VecVecPoint.fromList([quad]), faceColor, lineType: cv.LINE_AA);
+          cv.fillPoly(sidesAlphaPad, cv.VecVecPoint.fromList([quad]), cv.Scalar.all(255), lineType: cv.LINE_AA);
+        }
       }
 
       cv.Mat sidesBgrSmoothPad = cv.gaussianBlur(sidesBgrPad, (15, 15), 0.0);
@@ -351,6 +326,8 @@ class EquipementCore {
 
       // =========================================================================
       // === LE GRAND DÉCOUPAGE (RETOUR À LA TAILLE DE L'ÉCRAN) ===
+      // On retire la marge de 300px. L'image a pu déborder sans être "écrasée" 
+      // et elle est maintenant recadrée parfaitement.
       // =========================================================================
       cv.Rect cropRect = cv.Rect(pad, pad, wMur, hMur);
       
@@ -487,10 +464,9 @@ class EquipementCore {
 
       cv.Mat bgraFinal = cv.cvtColor(bgrFinal, cv.COLOR_BGR2BGRA);
       var bgraChannels = cv.split(bgraFinal);
-      bgraChannels[3] = finalAlpha8u;
+      bgraChannels[3] = finalAlpha8u; 
       cv.Mat finalImage = cv.merge(bgraChannels);
 
-      print("[Optimisation] Calque équipement généré (PNG Non Compressé)");
       var encodeResult = cv.imencode('.png', finalImage, params: cv.VecI32.fromList([16, 0]));
       return encodeResult.$2;
       
