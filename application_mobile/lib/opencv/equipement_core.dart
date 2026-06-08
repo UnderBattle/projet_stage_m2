@@ -299,7 +299,6 @@ class EquipementCore {
 
       double ratioContraste = (ecartTypeMur / 50.0).clamp(0.2, 1.2);
 
-      // Réglages d'intensité des ombres directionnelles et de contact, ajustés dynamiquement en fonction du contraste de la pièce.
       final double reglageOmbreDirBase = 0.12 * ratioContraste;
       final double reglageOmbreContact = 0.25 * ratioContraste;
 
@@ -352,8 +351,6 @@ class EquipementCore {
 
       // =========================================================================
       // === LE GRAND DÉCOUPAGE (RETOUR À LA TAILLE DE L'ÉCRAN) ===
-      // On retire la marge de 300px. L'image a pu déborder sans être "écrasée" 
-      // et elle est maintenant recadrée parfaitement.
       // =========================================================================
       cv.Rect cropRect = cv.Rect(pad, pad, wMur, hMur);
       
@@ -473,7 +470,7 @@ class EquipementCore {
       cv.Mat equipementRgbFinal = equipementNoisyFloat.convertTo(cv.MatType.CV_8UC3);
 
       // =========================================================================
-      // === PHASE 6 : CREATION DU CALQUE PNG TRANSPARENT (SECURISE) ===
+      // === PHASE 6 : CREATION DU CALQUE TRANSPARENT ===
       // =========================================================================
       cv.Mat alphaMaskF = alphaMaskTotal.convertTo(cv.MatType.CV_32FC1, alpha: 1.0 / 255.0);
       cv.Mat ombreF = ombreTotale.convertTo(cv.MatType.CV_32FC1, alpha: 1.0 / 255.0);
@@ -490,10 +487,11 @@ class EquipementCore {
 
       cv.Mat bgraFinal = cv.cvtColor(bgrFinal, cv.COLOR_BGR2BGRA);
       var bgraChannels = cv.split(bgraFinal);
-      bgraChannels[3] = finalAlpha8u; 
+      bgraChannels[3] = finalAlpha8u;
       cv.Mat finalImage = cv.merge(bgraChannels);
 
-      var encodeResult = cv.imencode('.png', finalImage);
+      print("[Optimisation] Calque équipement généré (PNG Non Compressé)");
+      var encodeResult = cv.imencode('.png', finalImage, params: cv.VecI32.fromList([16, 0]));
       return encodeResult.$2;
       
     } catch (e) {

@@ -71,6 +71,9 @@ class _EcranResultatState extends State<EcranResultat> {
   List<Map<String, double>>? _pointsCibles;
   bool _isManualPlacementMode = false;
 
+  // Sécurité pour ne charger le catalogue en RAM qu'une seule fois
+  bool _isCatalogPrecached = false;
+
   // Contrôleur pour gérer programmatiquement le zoom et le déplacement de l'image
   final TransformationController _transformationController = TransformationController();
 
@@ -104,6 +107,30 @@ class _EcranResultatState extends State<EcranResultat> {
     // Dynamisme parfait basé sur le catalogue existant
     _categorieSelectionnee = CatalogueService().catalogueGlobal.keys.first;
     _analyserImage();
+  }
+
+  // =========================================================================
+  // === OPTIMISATION : MISE EN CACHE RAM DU CATALOGUE ===
+  // =========================================================================
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // didChangeDependencies nous donne accès au 'context' nécessaire pour precacheImage
+    if (!_isCatalogPrecached) {
+      _precacherCatalogue();
+      _isCatalogPrecached = true;
+    }
+  }
+
+  /// Parcourt le catalogue et met les images en cache RAM pour un affichage instantané
+  void _precacherCatalogue() {
+    final catalogueGlobal = CatalogueService().catalogueGlobal;
+    for (var listeEquipements in catalogueGlobal.values) {
+      for (var equipement in listeEquipements) {
+        precacheImage(AssetImage(equipement.chemin), context);
+      }
+    }
+    print("[Optimisation] Images du catalogue préchargées en RAM/VRAM avec succès !");
   }
 
   @override

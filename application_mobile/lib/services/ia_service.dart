@@ -35,7 +35,7 @@ class IAService {
           // Fallback de sécurité : si le téléphone est trop vieux ou ne supporte pas l'API, 
           // on repasse sur le CPU optimisé (XNNPack).
           print("[IAService] Le GPU n'est pas supporté par ce téléphone, fallback sur CPU (XNNPack).");
-          interpreterOptions.addDelegate(XNNPackDelegate()); 
+          interpreterOptions.addDelegate(XNNPackDelegate());  
         }
       } else if (Platform.isIOS) {
         // Sur iOS, l'API Metal est utilisée par défaut avec GpuDelegate

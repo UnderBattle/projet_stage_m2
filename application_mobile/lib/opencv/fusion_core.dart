@@ -2,14 +2,17 @@ import 'dart:typed_data';
 import 'package:opencv_dart/opencv_dart.dart' as cv;
 
 class FusionCore {
-  /// Isolate d'assemblage ultra-rapide (Fusionne n'importe quel fond avec le PNG transparent)
+  /// Isolate d'assemblage ultra-rapide (Fusionne n'importe quel fond avec le calque transparent)
   static Future<Uint8List?> fusionnerCalqueIsolate(Map<String, dynamic> params) async {
     try {
       Uint8List fondBytes = params['fondBytes'];
-      Uint8List calquePngBytes = params['calquePngBytes'];
+      Uint8List calquePngBytes = params['calquePngBytes']; 
       
       cv.Mat bg = cv.imdecode(fondBytes, cv.IMREAD_COLOR);
-      cv.Mat overlay = cv.imdecode(calquePngBytes, cv.IMREAD_UNCHANGED); // Conserve le canal Alpha
+
+      // Le calque PNG ayant été encodé avec une compression de 0, 
+      // le décodage C++ est immédiat et sans erreur de mapping mémoire.
+      cv.Mat overlay = cv.imdecode(calquePngBytes, cv.IMREAD_UNCHANGED);
       
       // Extraction sécurisée du BGR et du canal Alpha
       cv.Mat overlayBgr = cv.cvtColor(overlay, cv.COLOR_BGRA2BGR);
