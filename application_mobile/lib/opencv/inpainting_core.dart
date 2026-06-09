@@ -90,8 +90,8 @@ class InpaintingCore {
       
       print("[IA Inpainting] Ratio trou : ${(ratioTrou*100).toStringAsFixed(1)}% | Densité lignes : ${densiteLignes.toStringAsFixed(2)}");
 
-      bool trouEstPetit = ratioTrou < 0.15;
-      bool murSansLigneForte = densiteLignes < 8.0;
+      bool trouEstPetit = ratioTrou < 0.25;
+      bool murSansLigneForte = densiteLignes < 44;
 
       if (trouEstPetit && murSansLigneForte) {
         print("[IA Inpainting] Trou petit et sans ligne détecté ! Bypass IA -> OpenCV (~5ms).");

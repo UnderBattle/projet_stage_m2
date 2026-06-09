@@ -142,10 +142,14 @@ class EquipementCore {
       double eqCXPad = momentsPad.m10 / (momentsPad.m00 + 0.0001);
       double eqCYPad = momentsPad.m01 / (momentsPad.m00 + 0.0001);
       
-      // Le vecteur de fuite part du VRAI centre optique de la caméra 
-      // (décalé du padding pour correspondre au centre physique de la photo)
-      double imgCXPad = (wMur / 2.0) + pad;
-      double imgCYPad = (hMur / 2.0) + pad;
+      // CORRECTION DU VOLUME AU CENTRE :
+      // Si le point de fuite est au centre absolu de l'image, un équipement placé au milieu 
+      // n'a aucun volume visible (aplatissement car vecX = 0 et vecY = 0). 
+      // On abaisse artificiellement le point de fuite de 25% et on le décale de 5% sur la droite.
+      // Cela simule une prise de vue réaliste en "contre-plongée" (l'artisan vise vers le haut), 
+      // garantissant qu'on verra TOUJOURS l'épaisseur du dessous et d'un côté !
+      double imgCXPad = (wMur / 2.0) + pad + (wMur * 0.05); 
+      double imgCYPad = (hMur / 2.0) + pad + (hMur * 0.25); 
       
       double vecX = imgCXPad - eqCXPad;
       double vecY = imgCYPad - eqCYPad;

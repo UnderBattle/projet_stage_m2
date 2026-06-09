@@ -17,7 +17,7 @@ class LigneGoulotte {
   final Offset end;
   LigneGoulotte(this.start, this.end);
 
-  // AJOUT : Surcharge des opérateurs pour comparer facilement deux goulottes (Utile pour le Undo)
+  // Surcharge des opérateurs pour comparer facilement deux goulottes (Utile pour le Undo)
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
@@ -104,6 +104,10 @@ class _EcranResultatState extends State<EcranResultat> {
   @override
   void initState() {
     super.initState();
+    
+    // Initialisation de l'Isolate persistant pour OpenCV
+    TraitementImage.initWorker();
+    
     // Dynamisme parfait basé sur le catalogue existant
     _categorieSelectionnee = CatalogueService().catalogueGlobal.keys.first;
     _analyserImage();
@@ -143,6 +147,10 @@ class _EcranResultatState extends State<EcranResultat> {
     _isDraggingGoulotteNotifier.dispose();
     _goulotteCurrentEndOrigNotifier.dispose();
     _magnifierPositionNotifier.dispose(); // Libération de la mémoire de la loupe
+    
+    // Fermeture propre de l'Isolate persistant
+    TraitementImage.disposeWorker();
+    
     super.dispose();
   }
   
@@ -258,7 +266,7 @@ class _EcranResultatState extends State<EcranResultat> {
 
         if (_pointsCibles != null) {
           setState(() => _loadingMessage = "Nettoyage du mur en cours...");
-          _imageFondPropreBytes = await compute(TraitementImage.effacerAutocollantIsolate, {
+          _imageFondPropreBytes = await TraitementImage.effacerAutocollantWorker({
             'photoPath': widget.photoPath,
             'pointsIA': _pointsCibles!,
             'lamaBytes': IAService().lamaBytes,
@@ -340,7 +348,7 @@ class _EcranResultatState extends State<EcranResultat> {
     });
 
     try {
-      _imageFondPropreBytes = await compute(TraitementImage.effacerAutocollantIsolate, {
+      _imageFondPropreBytes = await TraitementImage.effacerAutocollantWorker({
         'photoPath': widget.photoPath,
         'pointsIA': _pointsCibles!,
         'lamaBytes': IAService().lamaBytes,
@@ -390,7 +398,7 @@ class _EcranResultatState extends State<EcranResultat> {
         if (_goulotteNotifier.value != null) {
           setState(() => _loadingMessage = "Incrustation de la goulotte...");
           
-          _imageFondAvecGoulotteBytes = await compute(TraitementImage.incrusterGoulotteIsolate, {
+          _imageFondAvecGoulotteBytes = await TraitementImage.incrusterGoulotteWorker({
             'imageDeFondBytes': _imageFondPropreBytes!, // Toujours dessiné sur le mur propre !
             'ptDepartX': _goulotteNotifier.value!.start.dx,
             'ptDepartY': _goulotteNotifier.value!.start.dy,
@@ -407,7 +415,7 @@ class _EcranResultatState extends State<EcranResultat> {
       if (recomputeEquipement || _calqueEquipementPngBytes == null) {
         setState(() => _loadingMessage = "Calcul des ombres de l'équipement...");
         
-        _calqueEquipementPngBytes = await compute(TraitementImage.genererCalqueEquipementIsolate, {
+        _calqueEquipementPngBytes = await TraitementImage.genererCalqueEquipementWorker({
           'fondPropreBytes': _imageFondPropreBytes!, // Toujours calculée d'après le mur propre !
           'equipementBytes': equipementBytes,
           'pointsIA': _pointsCibles!,
@@ -424,7 +432,7 @@ class _EcranResultatState extends State<EcranResultat> {
       setState(() => _loadingMessage = "Assemblage final...");
       Uint8List fondBase = _imageFondAvecGoulotteBytes ?? _imageFondPropreBytes!;
 
-      Uint8List? resultImage = await compute(TraitementImage.fusionnerCalqueIsolate, {
+      Uint8List? resultImage = await TraitementImage.fusionnerCalqueWorker({
         'fondBytes': fondBase,
         'calquePngBytes': _calqueEquipementPngBytes!
       });
@@ -847,6 +855,23 @@ class _EcranResultatState extends State<EcranResultat> {
             }
           ),
 
+        // =========================================================================
+        // === CORRECTION : AFFICHE L'ÉQUIPEMENT RENDU LORS DU DRAG DE LA GOULOTTE =
+        // =========================================================================
+        if (_calqueEquipementPngBytes != null)
+          ValueListenableBuilder<bool>(
+            valueListenable: _isDraggingGoulotteNotifier,
+            builder: (context, isDraggingGoulotte, _) {
+              if (isDraggingGoulotte) {
+                // Quand on déplace la goulotte, on montre le calque PNG parfait de la clim sur le mur
+                return Positioned.fill(
+                  child: Image.memory(_calqueEquipementPngBytes!, fit: BoxFit.contain, gaplessPlayback: true),
+                );
+              }
+              return const SizedBox.shrink();
+            }
+          ),
+
         // Le painter global de la goulotte
         Positioned.fill(
           child: IgnorePointer(
@@ -860,8 +885,9 @@ class _EcranResultatState extends State<EcranResultat> {
                       valueListenable: _isDraggingGoulotteNotifier, // Etat du drag goulotte
                       builder: (context, isDraggingGoulotte, _) {
                         
-                        // On affiche la ligne 2D temporaire si on drag la goulotte OU L'EQUIPEMENT !
-                        bool showLine = isDraggingEquipement || isDraggingGoulotte;
+                        // CORRECTION : On n'affiche le trait vectoriel QUE lorsqu'on déplace la goulotte !
+                        // Sinon (si on déplace la clim), on verra la magnifique goulotte rendue par OpenCV en fond.
+                        bool showLine = isDraggingGoulotte;
                         // On affiche les ronds bleus (nœuds) uniquement si l'outil pinceau est activé
                         bool showNodes = _isDrawGoulotteMode;
 
@@ -996,15 +1022,10 @@ class _EcranResultatState extends State<EcranResultat> {
                         child: Transform.rotate(
                           angle: angleRad,
                           alignment: Alignment.topLeft, 
-                          // On enveloppe d'un ValueListenableBuilder Goulotte pour que l'Equipement apparaisse semi-transparent SI la goulotte est en cours de drag
-                          child: ValueListenableBuilder<bool>(
-                            valueListenable: _isDraggingGoulotteNotifier,
-                            builder: (context, isDraggingGoulotte, _) {
-                              return Opacity(
-                                opacity: (isDraggingEquipement || isDraggingGoulotte) ? 0.65 : 0.0, 
-                                child: Image.asset(_modeleSelectionne!.chemin, fit: BoxFit.fill),
-                              );
-                            }
+                          // CORRECTION : L'équipement brut n'est rendu transparent et visible QUE quand ON le déplace LUI.
+                          child: Opacity(
+                            opacity: isDraggingEquipement ? 0.65 : 0.0, 
+                            child: Image.asset(_modeleSelectionne!.chemin, fit: BoxFit.fill),
                           ),
                         ),
                       ),
