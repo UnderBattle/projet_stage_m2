@@ -1,6 +1,5 @@
 import 'dart:typed_data';
 import 'dart:math' as math;
-import 'dart:io'; // AJOUT IMPORTANT POUR LE GPU
 import 'package:opencv_dart/opencv_dart.dart' as cv;
 import 'package:tflite_flutter/tflite_flutter.dart';
 import 'package:image/image.dart' as img;
@@ -90,7 +89,7 @@ class InpaintingCore {
       
       print("[IA Inpainting] Ratio trou : ${(ratioTrou*100).toStringAsFixed(1)}% | Densité lignes : ${densiteLignes.toStringAsFixed(2)}");
 
-      bool trouEstPetit = ratioTrou < 0.25;
+      bool trouEstPetit = ratioTrou < 0.8;
       bool murSansLigneForte = densiteLignes < 44;
 
       if (trouEstPetit && murSansLigneForte) {
@@ -164,18 +163,16 @@ class InpaintingCore {
           }
 
           // =========================================================================
-          // === LE VRAI SECRET DE LA VITESSE : GPU ACTIVÉ DANS L'ISOLATE ===
+          // === SÉCURITÉ ISOLATE : DÉLÉGUÉ XNNPACK (CPU OPTIMISÉ MULTI-COEURS) ======
           // =========================================================================
           InterpreterOptions options = InterpreterOptions();
-          if (Platform.isAndroid) {
-            try {
-              options.addDelegate(GpuDelegateV2());
-            } catch (e) {
-              options.addDelegate(XNNPackDelegate());
-            }
-          } else if (Platform.isIOS) {
-            options.addDelegate(GpuDelegate());
-          }
+          
+          // Dans un Isolate, les drivers GPU crashent nativement (SIGSEGV).
+          // On force l'utilisation de XNNPack qui est totalement Thread-Safe.
+          options.addDelegate(XNNPackDelegate());
+          
+          // On compense l'absence du GPU en forçant l'utilisation de 4 coeurs du processeur
+          options.threads = 4;
 
           Interpreter interpreter = Interpreter.fromBuffer(lamaBytes, options: options);
           var tensor0 = interpreter.getInputTensor(0);
