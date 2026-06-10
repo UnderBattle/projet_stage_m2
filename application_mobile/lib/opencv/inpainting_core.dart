@@ -78,8 +78,8 @@ class InpaintingCore {
       cv.Mat invCropMaskBypass = cv.bitwiseNOT(cropMaskLama);
       
       double surfaceTrou = (rect.width * rect.height).toDouble();
-      double surfaceTotale = (cropS * cropS).toDouble();
-      double ratioTrou = surfaceTrou / surfaceTotale; 
+      double surfaceTotalePhoto = (wMur * hMur).toDouble(); 
+      double ratioTrou = surfaceTrou / surfaceTotalePhoto; 
       
       cv.Mat grayFloute = cv.gaussianBlur(cropGray, (5, 5), 0.0);
       cv.Mat edges = cv.canny(grayFloute, 30.0, 100.0);
@@ -87,13 +87,13 @@ class InpaintingCore {
       var meanEdges = cv.mean(edges, mask: invCropMaskBypass);
       double densiteLignes = meanEdges.val[0]; 
       
-      print("[IA Inpainting] Ratio trou : ${(ratioTrou*100).toStringAsFixed(1)}% | Densité lignes : ${densiteLignes.toStringAsFixed(2)}");
+      print("[IA Inpainting] Ratio trou (Photo) : ${(ratioTrou*100).toStringAsFixed(2)}% | Densité lignes : ${densiteLignes.toStringAsFixed(2)}");
 
-      bool trouEstPetit = ratioTrou < 0.8;
-      bool murSansLigneForte = densiteLignes < 44;
+      bool trouEstPetit = ratioTrou < 0.20;
+      bool murSansLigneForte = densiteLignes < 44.0;
 
-      if (trouEstPetit && murSansLigneForte) {
-        print("[IA Inpainting] Trou petit et sans ligne détecté ! Bypass IA -> OpenCV (~5ms).");
+      if ((trouEstPetit && murSansLigneForte) && double.parse(densiteLignes.toStringAsFixed(2)) < 1.00) {
+        print("[IA Inpainting] Trou petit ou sans ligne détecté ! Bypass IA -> OpenCV (~5ms).");
         
         int padding = 20;
         int rectX = math.max(0, rect.x - padding);
