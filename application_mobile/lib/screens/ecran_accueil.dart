@@ -1,5 +1,5 @@
 import 'dart:async';
-import 'dart:ui'; // AJOUT : Nécessaire pour l'effet de flou (Glassmorphism)
+import 'dart:ui'; 
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'package:camera/camera.dart';
@@ -19,7 +19,8 @@ class EcranAccueil extends StatefulWidget {
   State<EcranAccueil> createState() => _EcranAccueilState();
 }
 
-class _EcranAccueilState extends State<EcranAccueil> {
+// OPTIMISATION : Ajout de WidgetsBindingObserver pour écouter les mises en pause de l'application (ex: bouton Home)
+class _EcranAccueilState extends State<EcranAccueil> with WidgetsBindingObserver {
   CameraController? _controller;
   final ImagePicker _picker = ImagePicker();
   
@@ -40,10 +41,54 @@ class _EcranAccueilState extends State<EcranAccueil> {
   void initState() {
     super.initState();
     
+    // Enregistrement de l'observateur de cycle de vie système
+    WidgetsBinding.instance.addObserver(this);
+    
     // Lance le chargement des modèles d'IA en arrière-plan.
     _preparerIA();
 
     // Initialise le contrôleur avec la première caméra disponible (généralement la caméra arrière) en haute résolution.
+    _initialiserCamera();
+
+    // Démarre l'écoute des capteurs d'inclinaison du téléphone
+    _demarrerEcouteAccelerometre();
+  }
+
+  /// Initialise le flux d'écoute de l'accéléromètre de manière isolée
+  void _demarrerEcouteAccelerometre() {
+    if (_accelSubscription == null) {
+      _accelSubscription = accelerometerEventStream().listen((AccelerometerEvent event) {
+        if (mounted) {
+          _accelerometerNotifier.value = event;
+        }
+      });
+      print("[Optimisation] Capteur accéléromètre : ÉCOUTE ACTIVÉE");
+    }
+  }
+
+  /// Arrête proprement le flux du capteur pour économiser la batterie
+  void _arreterEcouteAccelerometre() {
+    _accelSubscription?.cancel();
+    _accelSubscription = null;
+    print("[Optimisation] Capteur accéléromètre : ÉCOUTE SUSPENDUE (Économie d'énergie)");
+  }
+
+  // =========================================================================
+  // === GESTION DU CYCLE DE VIE DES FLUX (ANTI-BATTERY DRAIN) ===
+  // =========================================================================
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // Cas 1 : L'application passe en arrière-plan (Bouton Home, appel téléphonique, etc.)
+    if (state == AppLifecycleState.inactive || state == AppLifecycleState.paused) {
+      _arreterEcouteAccelerometre();
+    } 
+    // Cas 2 : L'utilisateur revient sur l'application
+    else if (state == AppLifecycleState.resumed) {
+      _demarrerEcouteAccelerometre();
+    }
+  }
+
+  Future<void> _initialiserCamera() async {
     if (widget.cameras.isNotEmpty) {
       _controller = CameraController(
         widget.cameras[0],
@@ -57,13 +102,6 @@ class _EcranAccueilState extends State<EcranAccueil> {
         print("Erreur initialisation caméra : $e");
       });
     }
-
-    // Démarre l'écoute des capteurs d'inclinaison du téléphone
-    _accelSubscription = accelerometerEventStream().listen((AccelerometerEvent event) {
-      if (mounted) {
-        _accelerometerNotifier.value = event;
-      }
-    });
   }
 
   /// Charge les modèles d'IA et met à jour l'état pour activer les boutons.
@@ -78,11 +116,14 @@ class _EcranAccueilState extends State<EcranAccueil> {
 
   @override
   void dispose() {
-    // Libère les ressources de la caméra lorsque l'écran est détruit pour éviter les fuites de mémoire.
+    // Retrait obligatoire de l'observateur de cycle de vie
+    WidgetsBinding.instance.removeObserver(this);
+    
+    // Libère les ressources de la caméra
     _controller?.dispose();
     
-    // Ferme le flux du capteur pour économiser la batterie
-    _accelSubscription?.cancel();
+    // Sécurité maximale : on force la coupure du flux avant la destruction
+    _arreterEcouteAccelerometre();
     _accelerometerNotifier.dispose();
     super.dispose();
   }
@@ -140,13 +181,21 @@ class _EcranAccueilState extends State<EcranAccueil> {
   }
 
   /// Navigue vers l'écran de résultat en lui passant le chemin de l'image finale.
-  void _allerVersResultat(String imagePath) {
-    Navigator.push(
+  Future<void> _allerVersResultat(String imagePath) async {
+    // OPTIMISATION : On met en pause l'accéléromètre PENDANT qu'on est sur l'écran d'édition
+    _arreterEcouteAccelerometre();
+    
+    await Navigator.push(
       context,
       MaterialPageRoute(
         builder: (context) => EcranResultat(photoPath: imagePath),
       ),
     );
+    
+    // Dès que le "await" se termine (l'utilisateur a fait "Retour"), on relance le capteur !
+    if (mounted) {
+      _demarrerEcouteAccelerometre();
+    }
   }
 
   @override
@@ -321,7 +370,7 @@ class _NiveauBullePainter extends CustomPainter {
 
     // 2. Dessin de la bulle mobile (Indicateur de gravité)
     // Multiplicateur pour rendre le mouvement plus ample sur l'écran
-    double sensitivity = 15.0; 
+    double sensitivity = 15.0;
     double maxRadius = 80.0; // Ne pas sortir trop loin du viseur
     
     // Calcul de la position de la bulle (Inversée pour suivre l'inclinaison physique naturelle)

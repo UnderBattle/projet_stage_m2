@@ -17,7 +17,7 @@ class LigneGoulotte {
   final Offset end;
   LigneGoulotte(this.start, this.end);
 
-  // Surcharge des opérateurs pour comparer facilement deux goulottes (Utile pour le Undo)
+  // AJOUT : Surcharge des opérateurs pour comparer facilement deux goulottes (Utile pour le Undo)
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
@@ -84,6 +84,12 @@ class _EcranResultatState extends State<EcranResultat> {
   final ValueNotifier<double> _splitNotifier = ValueNotifier(1.0);
   final ValueNotifier<bool> _isDraggingEquipementNotifier = ValueNotifier(false);
 
+  // AJOUT : Pile d'historique pour annuler les déplacements successifs de l'équipement
+  final List<Offset> _historiqueDecalages = [Offset.zero];
+  
+  // OPTIMISATION : Notifier ultra-léger pour dire au bouton Undo de s'afficher SANS recalculer à chaque frame du glissement
+  final ValueNotifier<int> _historiqueLengthNotifier = ValueNotifier(1);
+
   // Variables d'état pour la Goulotte interactive
   bool _isDrawGoulotteMode = false;
   final ValueNotifier<LigneGoulotte?> _goulotteNotifier = ValueNotifier(null);
@@ -143,6 +149,7 @@ class _EcranResultatState extends State<EcranResultat> {
     _decalageNotifier.dispose();
     _splitNotifier.dispose();
     _isDraggingEquipementNotifier.dispose();
+    _historiqueLengthNotifier.dispose(); // OPTIMISATION: Nettoyage
     _goulotteNotifier.dispose();
     _isDraggingGoulotteNotifier.dispose();
     _goulotteCurrentEndOrigNotifier.dispose();
@@ -461,9 +468,11 @@ class _EcranResultatState extends State<EcranResultat> {
         _genererIncrustation(recomputeGoulotte: true, recomputeEquipement: false);
       }
     } else {
-      // Mode Equipement : On annule le décalage
-      if (_decalageNotifier.value != Offset.zero) {
-        _decalageNotifier.value = Offset.zero;
+      // CORRECTION : Mode Equipement -> On dépile le dernier élément pour faire un Undo étape par étape
+      if (_historiqueDecalages.length > 1) {
+        _historiqueDecalages.removeLast(); // Retire la position courante
+        _decalageNotifier.value = _historiqueDecalages.last; // Applique la précédente
+        _historiqueLengthNotifier.value = _historiqueDecalages.length; // OPTIMISATION : Déclenche la MAJ UI de manière ciblée
         _genererIncrustation(recomputeGoulotte: false, recomputeEquipement: true);
       }
     }
@@ -1011,6 +1020,13 @@ class _EcranResultatState extends State<EcranResultat> {
                         onPanEnd: (_) { 
                            if (!_isDraggingEquipementNotifier.value) return;
                            _isDraggingEquipementNotifier.value = false;
+
+                           // CORRECTION : Enregistrement de la nouvelle coordonnée validée dans la pile d'historique
+                           if (_historiqueDecalages.isEmpty || _historiqueDecalages.last != _decalageNotifier.value) {
+                             _historiqueDecalages.add(_decalageNotifier.value);
+                             _historiqueLengthNotifier.value = _historiqueDecalages.length; // OPTIMISATION : Demande la MAJ du bouton Undo
+                           }
+
                            // On ne re-calcule que l'Equipement ! C'est ce qui fait gagner du temps.
                            _genererIncrustation(recomputeGoulotte: false, recomputeEquipement: true); 
                          },
@@ -1235,6 +1251,13 @@ class _EcranResultatState extends State<EcranResultat> {
                           if (_isProcessing) return;
                           setState(() {
                             _modeleSelectionne = equipement;
+                            
+                            // CORRECTION : Nettoyage et reset complet de la pile pour repartir de zéro sur le nouveau modèle
+                            _decalageNotifier.value = Offset.zero;
+                            _historiqueDecalages.clear();
+                            _historiqueDecalages.add(Offset.zero);
+                            _historiqueLengthNotifier.value = 1; // OPTIMISATION : Resynchronise le bouton
+
                             // En cas de changement de modèle, on ne recalcule QUE l'équipement !
                             _genererIncrustation(recomputeGoulotte: false, recomputeEquipement: true);
                           });
@@ -1376,15 +1399,18 @@ class _EcranResultatState extends State<EcranResultat> {
                                 return ValueListenableBuilder<bool>(
                                   valueListenable: _isDraggingGoulotteNotifier,
                                   builder: (context, isDraggingGoulotte, _) {
-                                    return ValueListenableBuilder<LigneGoulotte?>(
-                                      valueListenable: _goulotteNotifier,
-                                      builder: (context, goulotteActuelle, _) {
-                                        return ValueListenableBuilder<Offset>(
-                                          valueListenable: _decalageNotifier,
-                                          builder: (context, decalage, _) {
+                                    
+                                    // OPTIMISATION : On écoute uniquement la LONGUEUR de l'historique 
+                                    // Le bouton ne se reconstruira plus jamais pendant que le doigt bouge l'équipement !
+                                    return ValueListenableBuilder<int>(
+                                      valueListenable: _historiqueLengthNotifier,
+                                      builder: (context, historyLength, _) {
+                                        return ValueListenableBuilder<LigneGoulotte?>(
+                                          valueListenable: _goulotteNotifier,
+                                          builder: (context, goulotteActuelle, _) {
                                             
                                             // 1. Est-ce que le bouton a une raison d'être affiché ?
-                                            bool showResetEquipement = !_isDrawGoulotteMode && decalage != Offset.zero;
+                                            bool showResetEquipement = !_isDrawGoulotteMode && historyLength > 1;
                                             bool showResetGoulotte = _isDrawGoulotteMode && 
                                                                      goulotteActuelle != null && 
                                                                      _goulotteInitiale != null && 
@@ -1410,9 +1436,9 @@ class _EcranResultatState extends State<EcranResultat> {
                                                     child: Container(
                                                       color: Colors.white.withValues(alpha: isDisabled ? 0.4 : 0.85),
                                                       child: IconButton(
-                                                        icon: const Icon(Icons.restore),
+                                                        icon: const Icon(Icons.undo), 
                                                         color: isDisabled ? Colors.grey : Colors.teal, // Grise l'icône si inactif
-                                                        tooltip: _isDrawGoulotteMode ? 'Réinitialiser la goulotte' : 'Réinitialiser l\'équipement',
+                                                        tooltip: _isDrawGoulotteMode ? 'Réinitialiser la goulotte' : 'Annuler le déplacement',
                                                         onPressed: isDisabled ? null : _reinitialiserPosition, // Désactive l'action
                                                       ),
                                                     ),
