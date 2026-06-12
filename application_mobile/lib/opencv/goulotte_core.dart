@@ -176,11 +176,9 @@ class GoulotteCore {
       cv.Mat ombre8u = shadowBlurred.convertTo(cv.MatType.CV_8UC1, alpha: opaciteOmbre); // Opacité de l'ombre adaptative
       cv.Mat invOmbre8u = cv.bitwiseNOT(ombre8u);
       cv.Mat invOmbre3c = cv.cvtColor(invOmbre8u, cv.COLOR_GRAY2BGR);
-      cv.Mat invOmbreF = invOmbre3c.convertTo(cv.MatType.CV_32FC3, alpha: 1.0 / 255.0);
       
-      cv.Mat fondF = fondMat.convertTo(cv.MatType.CV_32FC3);
-      cv.Mat fondOmbreF = cv.multiply(fondF, invOmbreF);
-      cv.Mat murOmbre = fondOmbreF.convertTo(cv.MatType.CV_8UC3);
+      // OPTIMISATION RAM : Application directe de l'ombre sans matrice 32F via l'argument scale
+      cv.Mat murOmbre = cv.multiply(fondMat, invOmbre3c, scale: 1.0 / 255.0);
 
       // 4. Teinte et Lumière dynamiques (Même traitement que pour l'équipement)
       // CORRECTION MAJEURE : On utilise 'fondMat' (le mur vierge) et non 'murOmbre' !
@@ -190,7 +188,6 @@ class GoulotteCore {
       cv.Mat murLisse = cv.resize(murUltraFlou, (w, h), interpolation: cv.INTER_CUBIC);
 
       cv.Mat grayLisse = cv.cvtColor(murLisse, cv.COLOR_BGR2GRAY);
-      cv.Mat grayLisseF = grayLisse.convertTo(cv.MatType.CV_32FC1);
       
       cv.Scalar meanMurSousGoulotte = cv.mean(murLisse, mask: maskBinaire);
       double bMur = meanMurSousGoulotte.val[0];
@@ -210,10 +207,12 @@ class GoulotteCore {
       tintG = 1.0 + (tintG - 1.0) * forceTeinteGoulotte;
       tintR = 1.0 + (tintR - 1.0) * forceTeinteGoulotte;
 
-      cv.Mat tintMat = cv.Mat.zeros(h, w, cv.MatType.CV_32FC3)..setTo(cv.Scalar(tintB, tintG, tintR, 0));
-      cv.Mat goulotteF = goulotteBgrSmooth.convertTo(cv.MatType.CV_32FC3); // On utilise la version smooth !
-      cv.Mat goulotteTintedF = cv.multiply(goulotteF, tintMat);
-      cv.Mat goulotteTinted = goulotteTintedF.convertTo(cv.MatType.CV_8UC3);
+      // OPTIMISATION TEINTE : Split des canaux et ajustement 8-bit ultra-rapide (Zéro Float Matrix)
+      var goulotteChannels = cv.split(goulotteBgrSmooth); // On utilise la version smooth !
+      cv.Mat bTinted = goulotteChannels[0].convertTo(cv.MatType.CV_8UC1, alpha: tintB);
+      cv.Mat gTinted = goulotteChannels[1].convertTo(cv.MatType.CV_8UC1, alpha: tintG);
+      cv.Mat rTinted = goulotteChannels[2].convertTo(cv.MatType.CV_8UC1, alpha: tintR);
+      cv.Mat goulotteTinted = cv.merge(cv.VecMat.fromList([bTinted, gTinted, rTinted]));
 
       // Ajustement de l'exposition (HSV)
       cv.Mat goulotteHsv = cv.cvtColor(goulotteTinted, cv.COLOR_BGR2HSV);
@@ -222,14 +221,13 @@ class GoulotteCore {
       cv.Scalar meanGoulotteV = cv.mean(hsvChannels[2], mask: maskBinaire);
       double lumaGoulotteNative = math.max(meanGoulotteV.val[0], 1.0);
 
-      cv.Mat ratioMap = grayLisseF.convertTo(cv.MatType.CV_32FC1, alpha: 1.0 / lumaGoulotteNative);
-      cv.Mat matriceUn = cv.Mat.zeros(h, w, cv.MatType.CV_32FC1)..setTo(cv.Scalar.all(1.0));
-      
       // POUR REGLER LA LUMINOSITE (Influence du mur)
       // Si la goulotte est trop sombre sur un mur foncé, baisse cette variable vers 0.30 ou 0.20
       // pour que la goulotte "ignore" l'obscurité du mur en dessous d'elle.
       double influenceMurGoulotte = 0.43; 
-      cv.Mat ratioSecurise = cv.addWeighted(ratioMap, influenceMurGoulotte, matriceUn, 1.0 - influenceMurGoulotte, 0.0);
+      
+      // OPTIMISATION LUMINOSITÉ : On combine la conversion 32F, l'alpha et le beta en 1 seule ligne !
+      cv.Mat ratioSecurise = grayLisse.convertTo(cv.MatType.CV_32FC1, alpha: influenceMurGoulotte / lumaGoulotteNative, beta: 1.0 - influenceMurGoulotte);
       
       cv.Mat vChannelF = hsvChannels[2].convertTo(cv.MatType.CV_32FC1);
       cv.Mat vShadowedF = cv.multiply(vChannelF, ratioSecurise);
@@ -239,8 +237,6 @@ class GoulotteCore {
       // Si le mur derrière la goulotte est sombre (ex: à l'ombre, 80/255), on baisse l'intensité lumineuse de la goulotte.
       double ratioLuminosite = (lumMurLocal / 128.0).clamp(0.65, 1.0);
       double luminositeGoulotteAdaptive = 0.95 * ratioLuminosite;
-      
-      vShadowedF = vShadowedF.convertTo(cv.MatType.CV_32FC1, alpha: luminositeGoulotteAdaptive);
 
       // Contre-jour (Voile atmosphérique) calqué sur le contraste environnant
       cv.Rect rectGoulotte = cv.boundingRect(cv.VecPoint.fromList([p1, p2]));
@@ -259,7 +255,9 @@ class GoulotteCore {
       }
       
       double ratioLift = (255.0 - voileAtmospherique) / 255.0;
-      cv.Mat vLiftedF = cv.addWeighted(vShadowedF, ratioLift, vShadowedF, 0.0, voileAtmospherique);
+      
+      // OPTIMISATION VOILE : Opération combinée (Luminosité globale + Contraste + Voile) en une passe
+      cv.Mat vLiftedF = vShadowedF.convertTo(cv.MatType.CV_32FC1, alpha: luminositeGoulotteAdaptive * ratioLift, beta: voileAtmospherique);
       cv.Mat vCappedF = cv.threshold(vLiftedF, 245.0, 245.0, cv.THRESH_TRUNC).$2;
       hsvChannels[2] = vCappedF.convertTo(cv.MatType.CV_8UC1);
 
@@ -270,13 +268,13 @@ class GoulotteCore {
       // Flou pour enlever l'aspect "image de synthèse"
       cv.Mat goulotteBrouillee = cv.gaussianBlur(goulotteRgbFinalPropre, (3, 3), 0.6);
       
-      cv.Mat goulotteFloat = goulotteBrouillee.convertTo(cv.MatType.CV_32FC3);
-      cv.Mat noise = cv.Mat.zeros(h, w, cv.MatType.CV_32FC3);
       // Simulation du grain ISO de la caméra
-      cv.randn(noise, cv.Scalar.all(0.0), cv.Scalar.all(5.0)); 
-      cv.Mat goulotteNoisyFloat = cv.add(goulotteFloat, noise);
+      // OPTIMISATION RAM : Génération du grain natif en 8 bits (Zéro 32F)
+      cv.Mat noise = cv.Mat.zeros(h, w, cv.MatType.CV_8UC3);
+      cv.randn(noise, cv.Scalar.all(128.0), cv.Scalar.all(5.0)); 
       
-      cv.Mat goulotteRgbFinal = goulotteNoisyFloat.convertTo(cv.MatType.CV_8UC3);
+      // L'offset -128.0 restaure l'équilibre colorimétrique instantanément
+      cv.Mat goulotteRgbFinal = cv.addWeighted(goulotteBrouillee, 1.0, noise, 1.0, -128.0);
 
       // 6. Fusion Finale (Alpha Blending)
       // Léger flou sur le masque binaire pour un anti-aliasing parfait des bords
@@ -284,17 +282,10 @@ class GoulotteCore {
       cv.Mat alpha3_8u = cv.cvtColor(alphaMask, cv.COLOR_GRAY2BGR);
       cv.Mat invAlpha3_8u = cv.bitwiseNOT(alpha3_8u);
 
-      cv.Mat alphaF = alpha3_8u.convertTo(cv.MatType.CV_32FC3, alpha: 1.0 / 255.0);
-      cv.Mat invAlphaF = invAlpha3_8u.convertTo(cv.MatType.CV_32FC3, alpha: 1.0 / 255.0);
-
-      cv.Mat fgF = goulotteRgbFinal.convertTo(cv.MatType.CV_32FC3);
-      cv.Mat bgF = murOmbre.convertTo(cv.MatType.CV_32FC3);
-
-      cv.Mat fgBlended = cv.multiply(fgF, alphaF);
-      cv.Mat bgBlended = cv.multiply(bgF, invAlphaF);
-
-      cv.Mat resultF = cv.add(fgBlended, bgBlended);
-      cv.Mat resultatFinal = resultF.convertTo(cv.MatType.CV_8UC3);
+      // Fusion Alpha entièrement en 8 bits avec paramètre d'échelle
+      cv.Mat fgBlended = cv.multiply(goulotteRgbFinal, alpha3_8u, scale: 1.0 / 255.0);
+      cv.Mat bgBlended = cv.multiply(murOmbre, invAlpha3_8u, scale: 1.0 / 255.0);
+      cv.Mat resultatFinal = cv.add(fgBlended, bgBlended);
 
       var encodeResult = cv.imencode('.jpg', resultatFinal);
       return encodeResult.$2;

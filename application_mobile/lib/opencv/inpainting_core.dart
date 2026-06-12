@@ -117,11 +117,10 @@ class InpaintingCore {
         cropRect = cv.Rect(rectX, rectY, rectW, rectH); 
         cv.Mat patch = murMat.region(cv.Rect(srcX, srcY, rectW, rectH)).clone();
         
-        cv.Mat patchFloat = patch.convertTo(cv.MatType.CV_32FC3);
-        cv.Mat noisePatch = cv.Mat.zeros(rectH, rectW, cv.MatType.CV_32FC3);
-        cv.randn(noisePatch, cv.Scalar.all(0.0), cv.Scalar.all(3.0)); 
-        cv.Mat patchNoisyFloat = cv.add(patchFloat, noisePatch);
-        cv.Mat finalPatch = patchNoisyFloat.convertTo(cv.MatType.CV_8UC3);
+        // OPTIMISATION RAM : Création de bruit photo direct en 8 bits
+        cv.Mat noisePatch = cv.Mat.zeros(rectH, rectW, cv.MatType.CV_8UC3);
+        cv.randn(noisePatch, cv.Scalar.all(128.0), cv.Scalar.all(3.0)); 
+        cv.Mat finalPatch = cv.addWeighted(patch, 1.0, noisePatch, 1.0, -128.0);
 
         finalPatch.copyTo(murRepare.region(cropRect));
         inpaintingReussi = true;
@@ -207,11 +206,10 @@ class InpaintingCore {
           cv.Mat blurredPatch = cv.gaussianBlur(patchFinal, (0, 0), 2.0); 
           cv.Mat patchNet = cv.addWeighted(patchFinal, 1.5, blurredPatch, -0.5, 0.0);
           
-          cv.Mat patchFloat = patchNet.convertTo(cv.MatType.CV_32FC3);
-          cv.Mat noisePatch = cv.Mat.zeros(cropS, cropS, cv.MatType.CV_32FC3);
-          cv.randn(noisePatch, cv.Scalar.all(0.0), cv.Scalar.all(4.5)); 
-          cv.Mat patchNoisyFloat = cv.add(patchFloat, noisePatch);
-          patchNet = patchNoisyFloat.convertTo(cv.MatType.CV_8UC3);
+          // OPTIMISATION RAM : Génération de bruit 8 bits direct (Zéro allocation 32F)
+          cv.Mat noisePatch = cv.Mat.zeros(cropS, cropS, cv.MatType.CV_8UC3);
+          cv.randn(noisePatch, cv.Scalar.all(128.0), cv.Scalar.all(4.5)); 
+          patchNet = cv.addWeighted(patchNet, 1.0, noisePatch, 1.0, -128.0);
 
           patchNet.copyTo(murRepare.region(cropRect));
           
@@ -260,20 +258,15 @@ class InpaintingCore {
 
           cv.Mat maskFeather8u = cv.gaussianBlur(petitMaskLama, (31, 31), 0.0);
           cv.Mat maskFeather3c = cv.cvtColor(maskFeather8u, cv.COLOR_GRAY2BGR);
-          cv.Mat maskFeatherF = maskFeather3c.convertTo(cv.MatType.CV_32FC3, alpha: 1.0 / 255.0);
-
+          
           cv.Mat invMaskFeather8u = cv.bitwiseNOT(maskFeather8u);
           cv.Mat invMaskFeather3c = cv.cvtColor(invMaskFeather8u, cv.COLOR_GRAY2BGR);
-          cv.Mat invMaskFeatherF = invMaskFeather3c.convertTo(cv.MatType.CV_32FC3, alpha: 1.0 / 255.0);
 
-          cv.Mat murRepareF = petitMurRepare.convertTo(cv.MatType.CV_32FC3);
-          cv.Mat murOriginalF = petitMurOriginal.convertTo(cv.MatType.CV_32FC3);
-
-          cv.Mat fgInpaint = cv.multiply(murRepareF, maskFeatherF);
-          cv.Mat bgInpaint = cv.multiply(murOriginalF, invMaskFeatherF);
+          // OPTIMISATION RAM : Plus de conversion massives en 32F. Le blending est fait en 8 bits !
+          cv.Mat fgInpaint = cv.multiply(petitMurRepare, maskFeather3c, scale: 1.0 / 255.0);
+          cv.Mat bgInpaint = cv.multiply(petitMurOriginal, invMaskFeather3c, scale: 1.0 / 255.0);
           
-          cv.Mat petitResultImgF = cv.add(fgInpaint, bgInpaint);
-          cv.Mat petitResultImg = petitResultImgF.convertTo(cv.MatType.CV_8UC3);
+          cv.Mat petitResultImg = cv.add(fgInpaint, bgInpaint);
 
           petitResultImg.copyTo(resultImg.region(cropRect));
         }
