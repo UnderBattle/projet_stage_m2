@@ -88,6 +88,24 @@ class _EcranAccueilState extends State<EcranAccueil> with WidgetsBindingObserver
     }
   }
 
+  /// Affiche une bannière d'erreur visible pour l'utilisateur
+  void _montrerErreur(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message, style: const TextStyle(color: Colors.white)),
+        backgroundColor: Colors.red.shade800,
+        behavior: SnackBarBehavior.floating,
+        duration: const Duration(seconds: 4),
+        action: SnackBarAction(
+          label: 'OK',
+          textColor: Colors.white,
+          onPressed: () {},
+        ),
+      ),
+    );
+  }
+
   Future<void> _initialiserCamera() async {
     if (widget.cameras.isNotEmpty) {
       _controller = CameraController(
@@ -100,6 +118,13 @@ class _EcranAccueilState extends State<EcranAccueil> with WidgetsBindingObserver
         setState(() {});
       }).catchError((Object e) {
         print("Erreur initialisation caméra : $e");
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          _montrerErreur("Impossible d'initialiser la caméra. Vérifiez les permissions.");
+        });
+      });
+    } else {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _montrerErreur("Aucune caméra détectée sur cet appareil.");
       });
     }
   }
@@ -150,7 +175,10 @@ class _EcranAccueilState extends State<EcranAccueil> with WidgetsBindingObserver
 
       } catch (e) {
         print("Erreur appareil photo : $e");
-        setState(() => _isOptimizing = false);
+        if (mounted) {
+          setState(() => _isOptimizing = false);
+          _montrerErreur("Erreur lors de la prise de photo : veuillez réessayer.");
+        }
       }
     }
   }
@@ -176,7 +204,10 @@ class _EcranAccueilState extends State<EcranAccueil> with WidgetsBindingObserver
       }
     } catch (e) {
       print("Erreur galerie : $e");
-      setState(() => _isOptimizing = false);
+      if (mounted) {
+        setState(() => _isOptimizing = false);
+        _montrerErreur("Impossible de charger l'image depuis la galerie.");
+      }
     }
   }
 
@@ -233,7 +264,11 @@ class _EcranAccueilState extends State<EcranAccueil> with WidgetsBindingObserver
                                 child: SizedBox(
                                   width: _controller!.value.previewSize?.height ?? 1,
                                   height: _controller!.value.previewSize?.width ?? 1,
-                                  child: CameraPreview(_controller!),
+                                  // AJOUT ANIMATION HERO ICI
+                                  child: Hero(
+                                    tag: 'image_mur',
+                                    child: CameraPreview(_controller!),
+                                  ),
                                 ),
                               ),
                               // Calque interactif du niveau à bulle

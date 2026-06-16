@@ -6,32 +6,14 @@ import 'package:flutter/foundation.dart';
 import 'package:image_gallery_saver_plus/image_gallery_saver_plus.dart';
 import 'package:flutter/services.dart';
 
-import '../utils/image_utils.dart';
 import '../traitement_image.dart';
 import '../services/ia_service.dart';
 import '../services/catalogue_service.dart';
-
-// Structure de données pour mémoriser la goulotte unique
-class LigneGoulotte {
-  final Offset start;
-  final Offset end;
-  LigneGoulotte(this.start, this.end);
-
-  // AJOUT : Surcharge des opérateurs pour comparer facilement deux goulottes (Utile pour le Undo)
-  @override
-  bool operator ==(Object other) =>
-      identical(this, other) ||
-      other is LigneGoulotte &&
-          runtimeType == other.runtimeType &&
-          start == other.start &&
-          end == other.end;
-
-  @override
-  int get hashCode => start.hashCode ^ end.hashCode;
-}
-
-// Les différents états d'interaction avec la goulotte
-enum DragMode { none, start, end, body, drawingNew }
+import '../models/devis_models.dart';
+import '../utils/painters_resultat.dart';
+import '../utils/image_utils.dart';
+import '../widgets/catalogue_devis.dart';
+import '../widgets/boutons_action_devis.dart';
 
 /// Écran affichant l'image capturée, exécutant la détection de l'IA, 
 /// et permettant à l'utilisateur d'incruster et de manipuler des modèles d'équipement.
@@ -160,6 +142,24 @@ class _EcranResultatState extends State<EcranResultat> {
     
     super.dispose();
   }
+
+  /// Affiche une bannière d'erreur visible pour l'utilisateur
+  void _montrerErreur(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message, style: const TextStyle(color: Colors.white)),
+        backgroundColor: Colors.red.shade800,
+        behavior: SnackBarBehavior.floating,
+        duration: const Duration(seconds: 4),
+        action: SnackBarAction(
+          label: 'OK',
+          textColor: Colors.white,
+          onPressed: () {},
+        ),
+      ),
+    );
+  }
   
   // Fonction pour empêcher un point de sortir des limites strictes de l'image
   Offset _clampToImageBounds(Offset point) {
@@ -189,7 +189,10 @@ class _EcranResultatState extends State<EcranResultat> {
   // =========================================================================
   Future<void> _analyserImage() async {
     final yoloModel = IAService().yoloModel;
-    if (yoloModel == null) return;
+    if (yoloModel == null) {
+      _montrerErreur("Le modèle IA (YOLO) n'a pas pu être chargé.");
+      return;
+    }
 
     try {
       setState(() => _loadingMessage = "Détection de l'autocollant...");
@@ -297,10 +300,13 @@ class _EcranResultatState extends State<EcranResultat> {
       }
     } catch (e) {
       print("[IA - ERREUR] Exception : $e");
-      setState(() {
-        _pointsCibles = null;
-        _isProcessing = false;
-      });
+      if (mounted) {
+        setState(() {
+          _pointsCibles = null;
+          _isProcessing = false;
+        });
+        _montrerErreur("Une erreur est survenue lors de l'analyse de l'image par l'IA.");
+      }
     }
   }
 
@@ -364,6 +370,9 @@ class _EcranResultatState extends State<EcranResultat> {
       _calqueEquipementPngBytes = null;
     } catch (e) {
       print("Erreur inpainting manuel : $e");
+      if (mounted) {
+         _montrerErreur("Impossible de nettoyer le mur (Erreur OpenCV).");
+      }
     }
 
     setState(() {
@@ -449,11 +458,18 @@ class _EcranResultatState extends State<EcranResultat> {
           _imageResultatBytes = resultImage;
           _splitNotifier.value = 1.0;
         });
+      } else {
+        throw Exception("L'image fusionnée est nulle.");
       }
     } catch (e) {
       print("[UI/OpenCV - ERREUR] Exception : $e");
+      if (mounted) {
+        _montrerErreur("Erreur lors de la génération 3D de l'équipement.");
+      }
     } finally {
-      setState(() => _isProcessing = false);
+      if (mounted) {
+        setState(() => _isProcessing = false);
+      }
     }
   }
 
@@ -525,8 +541,14 @@ class _EcranResultatState extends State<EcranResultat> {
 
     return Stack(
       children: [
-        Positioned.fill(child: Image.file(File(widget.photoPath), fit: BoxFit.contain)),
-        Positioned.fill(child: CustomPaint(painter: _BoundingBoxPainter(points: screenPoints))),
+        Positioned.fill(
+          // AJOUT ANIMATION HERO ICI
+          child: Hero(
+            tag: 'image_mur',
+            child: Image.file(File(widget.photoPath), fit: BoxFit.contain),
+          )
+        ),
+        Positioned.fill(child: CustomPaint(painter: BoundingBoxPainter(points: screenPoints))),
         
         Positioned(
           left: minX,
@@ -827,9 +849,17 @@ class _EcranResultatState extends State<EcranResultat> {
                     imgToShow = _imageFondAvecGoulotteBytes ?? _imageFondPropreBytes;
                   }
                   if (imgToShow == null) {
-                    return Image.file(File(widget.photoPath), fit: BoxFit.contain);
+                    // AJOUT ANIMATION HERO ICI (Fallback si chargement)
+                    return Hero(
+                      tag: 'image_mur',
+                      child: Image.file(File(widget.photoPath), fit: BoxFit.contain)
+                    );
                   }
-                  return Image.memory(imgToShow, fit: BoxFit.contain, gaplessPlayback: true);
+                  // AJOUT ANIMATION HERO ICI (Image rendue)
+                  return Hero(
+                    tag: 'image_mur',
+                    child: Image.memory(imgToShow, fit: BoxFit.contain, gaplessPlayback: true)
+                  );
                 }
               );
             }
@@ -853,7 +883,7 @@ class _EcranResultatState extends State<EcranResultat> {
                       double currentSplit = _isDrawGoulotteMode ? 1.0 : splitVal;
                       return Positioned.fill(
                         child: ClipRect(
-                          clipper: _SplitClipper(currentSplit),
+                          clipper: SplitClipper(currentSplit),
                           child: Image.memory(_imageResultatBytes!, fit: BoxFit.contain, gaplessPlayback: true), 
                         ),
                       );
@@ -901,7 +931,7 @@ class _EcranResultatState extends State<EcranResultat> {
                         bool showNodes = _isDrawGoulotteMode;
 
                         return CustomPaint(
-                          painter: _GoulottePainter(
+                          painter: GoulottePainter(
                             goulotte: goulotte,
                             scale: scale,
                             offsetX: offsetX,
@@ -1124,7 +1154,7 @@ class _EcranResultatState extends State<EcranResultat> {
                       builder: (context, currentEnd, _) {
                         if (_goulotteStartOrig == null || currentEnd == null) return const SizedBox.shrink();
                         return CustomPaint(
-                          painter: _GoulottePainter(
+                          painter: GoulottePainter(
                             goulotte: LigneGoulotte(_goulotteStartOrig!, currentEnd),
                             scale: scale,
                             offsetX: offsetX,
@@ -1178,124 +1208,6 @@ class _EcranResultatState extends State<EcranResultat> {
           }
         ),
       ],
-    );
-  }
-
-  Widget _buildCatalogue() {
-    final catalogueGlobal = CatalogueService().catalogueGlobal;
-
-    return Container(
-      height: 190,
-      padding: const EdgeInsets.only(top: 15, bottom: 10),
-      // STYLE : Bottom sheet moderne avec coins arrondis et ombre douce
-      decoration: BoxDecoration(
-        color: Colors.white,
-        boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.08), blurRadius: 20, offset: const Offset(0, -5))],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          SizedBox(
-            height: 40,
-            child: ListView.builder(
-              scrollDirection: Axis.horizontal,
-              padding: const EdgeInsets.symmetric(horizontal: 16.0),
-              itemCount: catalogueGlobal.keys.length,
-              itemBuilder: (context, index) {
-                String catName = catalogueGlobal.keys.elementAt(index);
-                bool isSelected = _categorieSelectionnee == catName;
-                
-                return Padding(
-                  padding: const EdgeInsets.only(right: 8.0),
-                  child: ChoiceChip(
-                    label: Text(catName, style: TextStyle(fontWeight: isSelected ? FontWeight.bold : FontWeight.w500, color: isSelected ? Colors.teal.shade800 : Colors.grey.shade700)),
-                    selected: isSelected,
-                    selectedColor: Colors.teal.withValues(alpha: 0.15),
-                    backgroundColor: Colors.grey.shade100,
-                    side: BorderSide.none, // Retrait des bordures pour un effet "pilule" moderne
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-                    showCheckmark: false, // Plus propre sans le V de validation
-                    onSelected: (bool selected) {
-                      if (selected && !_isProcessing) {
-                        setState(() => _categorieSelectionnee = catName);
-                      }
-                    },
-                  ),
-                );
-              },
-            ),
-          ),
-          const SizedBox(height: 15),
-          
-          Expanded(
-            child: catalogueGlobal[_categorieSelectionnee]!.isEmpty
-                ? Center(
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(Icons.build_circle_outlined, size: 40, color: Colors.grey.shade400),
-                        const SizedBox(height: 8),
-                        Text("Cette catégorie sera ajoutée prochainement", style: TextStyle(color: Colors.grey.shade600, fontStyle: FontStyle.italic, fontWeight: FontWeight.w500)),
-                      ],
-                    ),
-                  )
-                : ListView.builder(
-                    scrollDirection: Axis.horizontal,
-                    itemCount: catalogueGlobal[_categorieSelectionnee]!.length,
-                    itemBuilder: (context, index) {
-                      final equipement = catalogueGlobal[_categorieSelectionnee]![index];
-                      final bool isSelected = _modeleSelectionne == equipement;
-
-                      return GestureDetector(
-                        onTap: () {
-                          if (_isProcessing) return;
-                          setState(() {
-                            _modeleSelectionne = equipement;
-                            
-                            // CORRECTION : Nettoyage et reset complet de la pile pour repartir de zéro sur le nouveau modèle
-                            _decalageNotifier.value = Offset.zero;
-                            _historiqueDecalages.clear();
-                            _historiqueDecalages.add(Offset.zero);
-                            _historiqueLengthNotifier.value = 1; // OPTIMISATION : Resynchronise le bouton
-
-                            // En cas de changement de modèle, on ne recalcule QUE l'équipement !
-                            _genererIncrustation(recomputeGoulotte: false, recomputeEquipement: true);
-                          });
-                        },
-                        child: AnimatedContainer(
-                          duration: const Duration(milliseconds: 200),
-                          width: 120,
-                          margin: EdgeInsets.only(left: 16.0, bottom: 8.0, top: 4.0, right: index == catalogueGlobal[_categorieSelectionnee]!.length - 1 ? 16.0 : 0.0),
-                          // STYLE : Carte équipement sublimée avec ombres douces et bordures fines
-                          decoration: BoxDecoration(
-                            color: isSelected ? Colors.teal.withValues(alpha : 0.05) : Colors.white,
-                            border: Border.all(color: isSelected ? Colors.teal : Colors.grey.shade200, width: 2),
-                            borderRadius: BorderRadius.circular(15),
-                            boxShadow: [
-                              BoxShadow(
-                                color: isSelected ? Colors.teal.withValues(alpha : 0.15) : Colors.black.withValues(alpha: 0.04), 
-                                blurRadius: isSelected ? 12 : 8, 
-                                offset: const Offset(0, 4)
-                              )
-                            ],
-                          ),
-                          child: Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              Expanded(child: Padding(padding: const EdgeInsets.all(8.0), child: Image.asset(equipement.chemin, fit: BoxFit.contain))),
-                              Padding(
-                                padding: const EdgeInsets.symmetric(horizontal: 4.0, vertical: 8.0),
-                                child: Text(equipement.nom, style: TextStyle(fontSize: 12, fontWeight: isSelected ? FontWeight.bold : FontWeight.w500, color: isSelected ? Colors.teal.shade800 : Colors.black87), textAlign: TextAlign.center, maxLines: 2),
-                              ),
-                            ],
-                          ),
-                        ),
-                      );
-                    },
-                  ),
-          ),
-        ],
-      ),
     );
   }
 
@@ -1361,11 +1273,19 @@ class _EcranResultatState extends State<EcranResultat> {
                               child: LayoutBuilder(
                                 builder: (context, constraints) {
                                   if (_imageWidth == null || _imageHeight == null) {
-                                     return Image.file(File(widget.photoPath), fit: BoxFit.contain);
+                                     // AJOUT ANIMATION HERO ICI
+                                     return Hero(
+                                       tag: 'image_mur',
+                                       child: Image.file(File(widget.photoPath), fit: BoxFit.contain)
+                                     );
                                   }
 
                                   if (_pointsCibles == null && !_isManualPlacementMode) {
-                                     return Image.file(File(widget.photoPath), fit: BoxFit.contain);
+                                     // AJOUT ANIMATION HERO ICI
+                                     return Hero(
+                                       tag: 'image_mur',
+                                       child: Image.file(File(widget.photoPath), fit: BoxFit.contain)
+                                     );
                                   }
 
                                   double scale = math.min(constraints.maxWidth / _imageWidth!, constraints.maxHeight / _imageHeight!);
@@ -1390,160 +1310,27 @@ class _EcranResultatState extends State<EcranResultat> {
                       Positioned(
                         top: 10,
                         right: 10,
-                        child: Column(
-                          children: [
-                            // Le bouton Réinitialiser intelligent (grisé pendant le drag ou le calcul)
-                            ValueListenableBuilder<bool>(
-                              valueListenable: _isDraggingEquipementNotifier,
-                              builder: (context, isDraggingEquipement, _) {
-                                return ValueListenableBuilder<bool>(
-                                  valueListenable: _isDraggingGoulotteNotifier,
-                                  builder: (context, isDraggingGoulotte, _) {
-                                    
-                                    // OPTIMISATION : On écoute uniquement la LONGUEUR de l'historique 
-                                    // Le bouton ne se reconstruira plus jamais pendant que le doigt bouge l'équipement !
-                                    return ValueListenableBuilder<int>(
-                                      valueListenable: _historiqueLengthNotifier,
-                                      builder: (context, historyLength, _) {
-                                        return ValueListenableBuilder<LigneGoulotte?>(
-                                          valueListenable: _goulotteNotifier,
-                                          builder: (context, goulotteActuelle, _) {
-                                            
-                                            // 1. Est-ce que le bouton a une raison d'être affiché ?
-                                            bool showResetEquipement = !_isDrawGoulotteMode && historyLength > 1;
-                                            bool showResetGoulotte = _isDrawGoulotteMode && 
-                                                                     goulotteActuelle != null && 
-                                                                     _goulotteInitiale != null && 
-                                                                     goulotteActuelle != _goulotteInitiale;
-
-                                            // Si on n'a rien bougé, on ne montre pas le bouton
-                                            if (!showResetEquipement && !showResetGoulotte) return const SizedBox.shrink();
-
-                                            // 2. Est-ce que le bouton doit être désactivé (grisé) ?
-                                            bool isDisabled = _isProcessing || isDraggingEquipement || isDraggingGoulotte;
-
-                                            return Padding(
-                                              padding: const EdgeInsets.only(bottom: 12.0),
-                                              // STYLE : Bouton flottant Glassmorphism
-                                              child: Container(
-                                                decoration: BoxDecoration(
-                                                  shape: BoxShape.circle,
-                                                  boxShadow: [if (!isDisabled) BoxShadow(color: Colors.black.withValues(alpha: 0.15), blurRadius: 10, offset: const Offset(0, 4))],
-                                                ),
-                                                child: ClipOval(
-                                                  child: BackdropFilter(
-                                                    filter: ImageFilter.blur(sigmaX: 8, sigmaY: 8),
-                                                    child: Container(
-                                                      color: Colors.white.withValues(alpha: isDisabled ? 0.4 : 0.85),
-                                                      child: IconButton(
-                                                        icon: const Icon(Icons.undo), 
-                                                        color: isDisabled ? Colors.grey : Colors.teal, // Grise l'icône si inactif
-                                                        tooltip: _isDrawGoulotteMode ? 'Réinitialiser la goulotte' : 'Annuler le déplacement',
-                                                        onPressed: isDisabled ? null : _reinitialiserPosition, // Désactive l'action
-                                                      ),
-                                                    ),
-                                                  ),
-                                                ),
-                                              ),
-                                            );
-                                          }
-                                        );
-                                      }
-                                    );
-                                  }
-                                );
-                              }
-                            ),
-                            
-                            // Bouton d'activation du Mode Goulotte
-                            Padding(
-                              padding: const EdgeInsets.only(bottom: 12.0),
-                              child: Container(
-                                decoration: BoxDecoration(
-                                  shape: BoxShape.circle,
-                                  boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.15), blurRadius: 10, offset: const Offset(0, 4))],
-                                ),
-                                child: ClipOval(
-                                  child: BackdropFilter(
-                                    filter: ImageFilter.blur(sigmaX: 8, sigmaY: 8),
-                                    child: Container(
-                                      color: _isDrawGoulotteMode ? Colors.teal.withValues(alpha: 0.9) : Colors.white.withValues(alpha: 0.85),
-                                      child: IconButton(
-                                        icon: Icon(Icons.format_paint, color: _isDrawGoulotteMode ? Colors.white : Colors.teal),
-                                        tooltip: 'Tracer une goulotte',
-                                        onPressed: _isProcessing ? null : () {
-                                          setState(() {
-                                            _isDrawGoulotteMode = !_isDrawGoulotteMode;
-                                            _isDraggingEquipementNotifier.value = false; 
-                                          });
-                                        },
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            ),
-                            
-                            // Bouton pour ENLEVER la goulotte (Unique goulotte)
-                            if (_isDrawGoulotteMode) // Apparaît uniquement en mode goulotte
-                              ValueListenableBuilder<LigneGoulotte?>(
-                                valueListenable: _goulotteNotifier,
-                                builder: (context, goulotteActuelle, _) {
-                                  if (goulotteActuelle == null) return const SizedBox.shrink();
-                                  return Padding(
-                                    padding: const EdgeInsets.only(bottom: 12.0),
-                                    child: Container(
-                                      decoration: BoxDecoration(
-                                        shape: BoxShape.circle,
-                                        boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.15), blurRadius: 10, offset: const Offset(0, 4))],
-                                      ),
-                                      child: ClipOval(
-                                        child: BackdropFilter(
-                                          filter: ImageFilter.blur(sigmaX: 8, sigmaY: 8),
-                                          child: Container(
-                                            color: Colors.white.withValues(alpha: 0.85),
-                                            child: IconButton(
-                                              icon: const Icon(Icons.delete_outline),
-                                              color: Colors.red,
-                                              tooltip: 'Supprimer la goulotte',
-                                              onPressed: _isProcessing ? null : () {
-                                                // Sécurité pour éviter le missclick
-                                                showDialog(
-                                                  context: context,
-                                                  builder: (BuildContext context) {
-                                                    return AlertDialog(
-                                                      title: const Text("Supprimer la goulotte"),
-                                                      content: const Text("Êtes-vous sûr de vouloir effacer cette goulotte ?"),
-                                                      actions: [
-                                                        TextButton(
-                                                          onPressed: () => Navigator.of(context).pop(),
-                                                          child: const Text("Annuler", style: TextStyle(color: Colors.grey)),
-                                                        ),
-                                                        ElevatedButton(
-                                                          style: ElevatedButton.styleFrom(backgroundColor: Colors.red, foregroundColor: Colors.white),
-                                                          onPressed: () {
-                                                            Navigator.of(context).pop();
-                                                            _goulotteNotifier.value = null; // Vide la goulotte unique
-                                                            _goulotteInitiale = null; // On vide aussi l'historique
-                                                            // On force le recalcul uniquement de la goulotte (qui disparaît)
-                                                            _genererIncrustation(recomputeGoulotte: true, recomputeEquipement: false); 
-                                                          },
-                                                          child: const Text("Supprimer"),
-                                                        ),
-                                                      ],
-                                                    );
-                                                  },
-                                                );
-                                              },
-                                            ),
-                                          ),
-                                        ),
-                                      ),
-                                    ),
-                                  );
-                                }
-                              ),
-                          ],
+                        child: BoutonsActionDevis(
+                          isDraggingEquipementNotifier: _isDraggingEquipementNotifier,
+                          isDraggingGoulotteNotifier: _isDraggingGoulotteNotifier,
+                          historiqueLengthNotifier: _historiqueLengthNotifier,
+                          goulotteNotifier: _goulotteNotifier,
+                          goulotteInitiale: _goulotteInitiale,
+                          isDrawGoulotteMode: _isDrawGoulotteMode,
+                          isProcessing: _isProcessing,
+                          onUndo: _reinitialiserPosition,
+                          onToggleGoulotteMode: () {
+                            setState(() {
+                              _isDrawGoulotteMode = !_isDrawGoulotteMode;
+                              _isDraggingEquipementNotifier.value = false; 
+                            });
+                          },
+                          onDeleteConfirmed: () {
+                            _goulotteNotifier.value = null; // Vide la goulotte unique
+                            _goulotteInitiale = null; // On vide aussi l'historique
+                            // On force le recalcul uniquement de la goulotte (qui disparaît)
+                            _genererIncrustation(recomputeGoulotte: true, recomputeEquipement: false); 
+                          },
                         ),
                       ),
 
@@ -1581,7 +1368,29 @@ class _EcranResultatState extends State<EcranResultat> {
               ),
             ),
 
-            if (_pointsCibles != null && !_isManualPlacementMode) _buildCatalogue(),
+            if (_pointsCibles != null && !_isManualPlacementMode)
+              CatalogueDevis(
+                categorieSelectionnee: _categorieSelectionnee,
+                modeleSelectionne: _modeleSelectionne,
+                isProcessing: _isProcessing,
+                onCategorieChanged: (catName) {
+                  setState(() => _categorieSelectionnee = catName);
+                },
+                onModeleSelected: (equipement) {
+                  setState(() {
+                    _modeleSelectionne = equipement;
+                    
+                    // CORRECTION : Nettoyage et reset complet de la pile pour repartir de zéro sur le nouveau modèle
+                    _decalageNotifier.value = Offset.zero;
+                    _historiqueDecalages.clear();
+                    _historiqueDecalages.add(Offset.zero);
+                    _historiqueLengthNotifier.value = 1; // OPTIMISATION : Resynchronise le bouton
+
+                    // En cas de changement de modèle, on ne recalcule QUE l'équipement !
+                    _genererIncrustation(recomputeGoulotte: false, recomputeEquipement: true);
+                  });
+                },
+              ),
 
             const SizedBox(height: 80), // Espace pour le FAB
           ],
@@ -1610,135 +1419,4 @@ class _EcranResultatState extends State<EcranResultat> {
       floatingActionButtonLocation: FloatingActionButtonLocation.centerFloat,
     );
   }
-}
-
-/// =========================================================================
-/// === CLASSES UTILITAIRES (DESSIN ET DÉCOUPAGE) ===
-/// =========================================================================
-
-/// CustomPainter responsable de dessiner la goulotte vectorielle et ses points nodaux.
-/// L'affichage est conditionnel pour optimiser les performances.
-class _GoulottePainter extends CustomPainter {
-  final LigneGoulotte? goulotte;
-  final double scale;
-  final double offsetX;
-  final double offsetY;
-  final double thicknessOrig; 
-  final bool showLine; // Gère l'affichage du corps de la goulotte
-  final bool showNodes; // Gère l'affichage des nœuds bleus (ronds)
-
-  _GoulottePainter({
-    required this.goulotte, 
-    required this.scale, 
-    required this.offsetX, 
-    required this.offsetY, 
-    required this.thicknessOrig, 
-    required this.showLine,
-    required this.showNodes,
-  });
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    if (goulotte == null) return;
-
-    final p1 = Offset(goulotte!.start.dx * scale + offsetX, goulotte!.start.dy * scale + offsetY);
-    final p2 = Offset(goulotte!.end.dx * scale + offsetX, goulotte!.end.dy * scale + offsetY);
-    
-    // On dessine le trait vectoriel si demandé (quand l'image cuite d'OpenCV est masquée par un déplacement)
-    if (showLine) {
-      final paintLine = Paint()
-        ..color = Colors.white70
-        ..strokeWidth = thicknessOrig * scale 
-        ..strokeCap = StrokeCap.butt; // Bout parfaitement plat
-        
-      canvas.drawLine(p1, p2, paintLine);
-    }
-
-    // Indicateurs nodaux (les ronds) pour montrer à l'utilisateur où grab/tirer la ligne
-    if (showNodes) {
-      final paintHandle = Paint()..color = Colors.white; // Anneaux blancs au lieu de ronds bleus pleins
-      final paintHandleBorder = Paint()
-        ..color = Colors.teal
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 2.5; 
-      
-      List<Offset> nodes = [p1, p2];
-      for (var p in nodes) {
-        // Ombre portée sous le nœud
-        canvas.drawCircle(p, 9.0, Paint()..color = Colors.black26..maskFilter = const MaskFilter.blur(BlurStyle.normal, 3));
-        canvas.drawCircle(p, 8.0, paintHandle);
-        canvas.drawCircle(p, 8.0, paintHandleBorder);
-      }
-    }
-  }
-
-  @override
-  bool shouldRepaint(covariant _GoulottePainter oldDelegate) => true;
-}
-
-/// CustomClipper utilisé pour créer l'effet de séparation (Slider Split Screen).
-/// Permet de comparer le mur original avec le mur traité par l'IA.
-class _SplitClipper extends CustomClipper<Rect> {
-  final double percentage;
-  _SplitClipper(this.percentage);
-
-  @override
-  Rect getClip(Size size) {
-    return Rect.fromLTRB(0, 0, size.width * percentage, size.height);
-  }
-
-  @override
-  bool shouldReclip(_SplitClipper oldClipper) => percentage != oldClipper.percentage;
-}
-
-/// CustomPainter utilisé pour dessiner la zone de sélection manuelle (Bounding Box) et sa surface bleutée.
-class _BoundingBoxPainter extends CustomPainter {
-  final List<Offset> points;
-  _BoundingBoxPainter({required this.points});
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    if (points.length != 4) return;
-    
-    final paint = Paint()
-      ..color = Colors.teal // Adapté à la charte graphique
-      ..strokeWidth = 3.0
-      ..style = PaintingStyle.stroke;
-      
-    final path = Path()
-      ..moveTo(points[0].dx, points[0].dy)
-      ..lineTo(points[1].dx, points[1].dy)
-      ..lineTo(points[2].dx, points[2].dy)
-      ..lineTo(points[3].dx, points[3].dy)
-      ..close();
-      
-    canvas.drawPath(path, paint);
-
-    // Dessine de légers crochets dans les angles pour un aspect viseur d'appareil photo
-    double cornerLength = 20.0;
-    final cornerPaint = Paint()..color = Colors.teal..strokeWidth = 5.0..style = PaintingStyle.stroke;
-    
-    for (int i = 0; i < 4; i++) {
-      Offset p = points[i];
-      Offset pNext = points[(i + 1) % 4];
-      Offset pPrev = points[(i + 3) % 4];
-      
-      Offset dNext = (pNext - p) / (pNext - p).distance;
-      Offset dPrev = (pPrev - p) / (pPrev - p).distance;
-      
-      Path cornerPath = Path()
-        ..moveTo(p.dx + dPrev.dx * cornerLength, p.dy + dPrev.dy * cornerLength)
-        ..lineTo(p.dx, p.dy)
-        ..lineTo(p.dx + dNext.dx * cornerLength, p.dy + dNext.dy * cornerLength);
-      canvas.drawPath(cornerPath, cornerPaint);
-    }
-
-    final fillPaint = Paint()
-      ..color = Colors.teal.withValues(alpha: 0.15)
-      ..style = PaintingStyle.fill;
-    canvas.drawPath(path, fillPaint);
-  }
-
-  @override
-  bool shouldRepaint(_BoundingBoxPainter oldDelegate) => true;
 }

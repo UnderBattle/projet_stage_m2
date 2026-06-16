@@ -92,7 +92,7 @@ class InpaintingCore {
       bool trouEstPetit = ratioTrou < 0.20;
       bool murSansLigneForte = densiteLignes < 44.0;
 
-      if ((trouEstPetit && murSansLigneForte) && double.parse(densiteLignes.toStringAsFixed(2)) < 1.00) {
+      if ((trouEstPetit && murSansLigneForte) && double.parse(densiteLignes.toStringAsFixed(2)) < 0.20) {
         print("[IA Inpainting] Trou petit ou sans ligne détecté ! Bypass IA -> OpenCV (~5ms).");
         
         int padding = 20;

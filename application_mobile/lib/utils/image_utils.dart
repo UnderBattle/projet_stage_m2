@@ -59,9 +59,7 @@ Future<void> nettoyerCacheImages() async {
 Future<String?> redimensionnerImageLourde(String imagePath) async {
   try {
     final originalFile = File(imagePath);
-    
-    // OPTIMISATION : Utilisation d'OpenCV (C++) à la place de package:image (Dart)
-    // Gain de temps : Passe de ~2-3 secondes à ~50 millisecondes !
+
     cv.Mat image = cv.imread(imagePath, flags: cv.IMREAD_COLOR);
     
     if (image.isEmpty) return null;
