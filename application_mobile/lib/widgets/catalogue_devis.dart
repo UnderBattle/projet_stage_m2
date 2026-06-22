@@ -20,14 +20,15 @@ class CatalogueDevis extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final catalogueGlobal = CatalogueService().catalogueGlobal;
+    final theme = Theme.of(context); // NOUVEAU : Récupération du thème actif
 
     return Container(
       height: 190,
       padding: const EdgeInsets.only(top: 15, bottom: 10),
       // STYLE : Bottom sheet moderne avec coins arrondis et ombre douce
       decoration: BoxDecoration(
-        color: Colors.white,
-        boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.08), blurRadius: 20, offset: const Offset(0, -5))],
+        color: theme.cardColor, // Utilise la couleur de carte du thème
+        boxShadow: [BoxShadow(color: theme.shadowColor.withValues(alpha: 0.08), blurRadius: 20, offset: const Offset(0, -5))],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -45,10 +46,16 @@ class CatalogueDevis extends StatelessWidget {
                 return Padding(
                   padding: const EdgeInsets.only(right: 8.0),
                   child: ChoiceChip(
-                    label: Text(catName, style: TextStyle(fontWeight: isSelected ? FontWeight.bold : FontWeight.w500, color: isSelected ? Colors.teal.shade800 : Colors.grey.shade700)),
+                    label: Text(
+                      catName, 
+                      style: TextStyle(
+                        fontWeight: isSelected ? FontWeight.bold : FontWeight.w500, 
+                        color: isSelected ? theme.colorScheme.primary : theme.colorScheme.onSurface.withValues(alpha: 0.7)
+                      )
+                    ),
                     selected: isSelected,
-                    selectedColor: Colors.teal.withValues(alpha: 0.15),
-                    backgroundColor: Colors.grey.shade100,
+                    selectedColor: theme.colorScheme.primary.withValues(alpha: 0.15),
+                    backgroundColor: theme.scaffoldBackgroundColor, // S'adapte au mode sombre
                     side: BorderSide.none, // Retrait des bordures pour un effet "pilule" moderne
                     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
                     showCheckmark: false, // Plus propre sans le V de validation
@@ -70,9 +77,9 @@ class CatalogueDevis extends StatelessWidget {
                     child: Column(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        Icon(Icons.build_circle_outlined, size: 40, color: Colors.grey.shade400),
+                        Icon(Icons.build_circle_outlined, size: 40, color: theme.colorScheme.onSurface.withValues(alpha: 0.3)),
                         const SizedBox(height: 8),
-                        Text("Cette catégorie sera ajoutée prochainement", style: TextStyle(color: Colors.grey.shade600, fontStyle: FontStyle.italic, fontWeight: FontWeight.w500)),
+                        Text("Cette catégorie sera ajoutée prochainement", style: TextStyle(color: theme.colorScheme.onSurface.withValues(alpha: 0.5), fontStyle: FontStyle.italic, fontWeight: FontWeight.w500)),
                       ],
                     ),
                   )
@@ -94,12 +101,12 @@ class CatalogueDevis extends StatelessWidget {
                           margin: EdgeInsets.only(left: 16.0, bottom: 8.0, top: 4.0, right: index == catalogueGlobal[categorieSelectionnee]!.length - 1 ? 16.0 : 0.0),
                           // STYLE : Carte équipement sublimée avec ombres douces et bordures fines
                           decoration: BoxDecoration(
-                            color: isSelected ? Colors.teal.withValues(alpha : 0.05) : Colors.white,
-                            border: Border.all(color: isSelected ? Colors.teal : Colors.grey.shade200, width: 2),
+                            color: isSelected ? theme.colorScheme.primary.withValues(alpha : 0.05) : theme.cardColor,
+                            border: Border.all(color: isSelected ? theme.colorScheme.primary : theme.dividerColor, width: 2),
                             borderRadius: BorderRadius.circular(15),
                             boxShadow: [
                               BoxShadow(
-                                color: isSelected ? Colors.teal.withValues(alpha : 0.15) : Colors.black.withValues(alpha: 0.04), 
+                                color: isSelected ? theme.colorScheme.primary.withValues(alpha : 0.15) : theme.shadowColor.withValues(alpha: 0.04), 
                                 blurRadius: isSelected ? 12 : 8, 
                                 offset: const Offset(0, 4)
                               )
@@ -111,7 +118,16 @@ class CatalogueDevis extends StatelessWidget {
                               Expanded(child: Padding(padding: const EdgeInsets.all(8.0), child: Image.asset(equipement.chemin, fit: BoxFit.contain))),
                               Padding(
                                 padding: const EdgeInsets.symmetric(horizontal: 4.0, vertical: 8.0),
-                                child: Text(equipement.nom, style: TextStyle(fontSize: 12, fontWeight: isSelected ? FontWeight.bold : FontWeight.w500, color: isSelected ? Colors.teal.shade800 : Colors.black87), textAlign: TextAlign.center, maxLines: 2),
+                                child: Text(
+                                  equipement.nom, 
+                                  style: TextStyle(
+                                    fontSize: 12, 
+                                    fontWeight: isSelected ? FontWeight.bold : FontWeight.w500, 
+                                    color: isSelected ? theme.colorScheme.primary : theme.colorScheme.onSurface
+                                  ), 
+                                  textAlign: TextAlign.center, 
+                                  maxLines: 2
+                                ),
                               ),
                             ],
                           ),

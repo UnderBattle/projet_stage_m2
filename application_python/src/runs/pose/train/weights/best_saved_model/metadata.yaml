@@ -1,6 +1,6 @@
-description: Ultralytics YOLOv8n-pose model trained on ../../dataset_autocollant/data.yaml
+description: Ultralytics YOLOv8s-pose model trained on ../../dataset_autocollant/data.yaml
 author: Ultralytics
-date: '2026-04-17T14:36:19.941423'
+date: '2026-04-28T09:25:31.319429'
 version: 8.4.33
 license: AGPL-3.0 License (https://ultralytics.com/license)
 docs: https://docs.ultralytics.com
@@ -8,8 +8,8 @@ stride: 32
 task: pose
 batch: 1
 imgsz:
-- 640
-- 640
+- 1024
+- 1024
 names:
   0: autocollant
 args:

@@ -30,6 +30,8 @@ class BoutonsActionDevis extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context); // NOUVEAU : Récupération du thème
+
     return Column(
       children: [
         // Le bouton Réinitialiser intelligent (grisé pendant le drag ou le calcul)
@@ -68,16 +70,16 @@ class BoutonsActionDevis extends StatelessWidget {
                           child: Container(
                             decoration: BoxDecoration(
                               shape: BoxShape.circle,
-                              boxShadow: [if (!isDisabled) BoxShadow(color: Colors.black.withValues(alpha: 0.15), blurRadius: 10, offset: const Offset(0, 4))],
+                              boxShadow: [if (!isDisabled) BoxShadow(color: theme.shadowColor.withValues(alpha: 0.15), blurRadius: 10, offset: const Offset(0, 4))],
                             ),
                             child: ClipOval(
                               child: BackdropFilter(
                                 filter: ImageFilter.blur(sigmaX: 8, sigmaY: 8),
                                 child: Container(
-                                  color: Colors.white.withValues(alpha: isDisabled ? 0.4 : 0.85),
+                                  color: theme.cardColor.withValues(alpha: isDisabled ? 0.4 : 0.85), // S'adapte au mode sombre
                                   child: IconButton(
                                     icon: const Icon(Icons.undo), 
-                                    color: isDisabled ? Colors.grey : Colors.teal, // Grise l'icône si inactif
+                                    color: isDisabled ? theme.disabledColor : theme.colorScheme.primary, // Grise l'icône si inactif
                                     tooltip: isDrawGoulotteMode ? 'Réinitialiser la goulotte' : 'Annuler le déplacement',
                                     onPressed: isDisabled ? null : onUndo, // Désactive l'action
                                   ),
@@ -101,15 +103,15 @@ class BoutonsActionDevis extends StatelessWidget {
           child: Container(
             decoration: BoxDecoration(
               shape: BoxShape.circle,
-              boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.15), blurRadius: 10, offset: const Offset(0, 4))],
+              boxShadow: [BoxShadow(color: theme.shadowColor.withValues(alpha: 0.15), blurRadius: 10, offset: const Offset(0, 4))],
             ),
             child: ClipOval(
               child: BackdropFilter(
                 filter: ImageFilter.blur(sigmaX: 8, sigmaY: 8),
                 child: Container(
-                  color: isDrawGoulotteMode ? Colors.teal.withValues(alpha: 0.9) : Colors.white.withValues(alpha: 0.85),
+                  color: isDrawGoulotteMode ? theme.colorScheme.primary.withValues(alpha: 0.9) : theme.cardColor.withValues(alpha: 0.85),
                   child: IconButton(
-                    icon: Icon(Icons.format_paint, color: isDrawGoulotteMode ? Colors.white : Colors.teal),
+                    icon: Icon(Icons.format_paint, color: isDrawGoulotteMode ? theme.colorScheme.onPrimary : theme.colorScheme.primary),
                     tooltip: 'Tracer une goulotte',
                     onPressed: isProcessing ? null : onToggleGoulotteMode,
                   ),
@@ -130,16 +132,16 @@ class BoutonsActionDevis extends StatelessWidget {
                 child: Container(
                   decoration: BoxDecoration(
                     shape: BoxShape.circle,
-                    boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.15), blurRadius: 10, offset: const Offset(0, 4))],
+                    boxShadow: [BoxShadow(color: theme.shadowColor.withValues(alpha: 0.15), blurRadius: 10, offset: const Offset(0, 4))],
                   ),
                   child: ClipOval(
                     child: BackdropFilter(
                       filter: ImageFilter.blur(sigmaX: 8, sigmaY: 8),
                       child: Container(
-                        color: Colors.white.withValues(alpha: 0.85),
+                        color: theme.cardColor.withValues(alpha: 0.85),
                         child: IconButton(
                           icon: const Icon(Icons.delete_outline),
-                          color: Colors.red,
+                          color: theme.colorScheme.error, // S'adapte au mode sombre
                           tooltip: 'Supprimer la goulotte',
                           onPressed: isProcessing ? null : () {
                             // Sécurité pour éviter le missclick
@@ -152,10 +154,10 @@ class BoutonsActionDevis extends StatelessWidget {
                                   actions: [
                                     TextButton(
                                       onPressed: () => Navigator.of(context).pop(),
-                                      child: const Text("Annuler", style: TextStyle(color: Colors.grey)),
+                                      child: Text("Annuler", style: TextStyle(color: theme.colorScheme.onSurface.withValues(alpha: 0.6))),
                                     ),
                                     ElevatedButton(
-                                      style: ElevatedButton.styleFrom(backgroundColor: Colors.red, foregroundColor: Colors.white),
+                                      style: ElevatedButton.styleFrom(backgroundColor: theme.colorScheme.error, foregroundColor: Colors.white),
                                       onPressed: () {
                                         Navigator.of(context).pop();
                                         onDeleteConfirmed();

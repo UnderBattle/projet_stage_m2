@@ -91,15 +91,17 @@ class _EcranAccueilState extends State<EcranAccueil> with WidgetsBindingObserver
   /// Affiche une bannière d'erreur visible pour l'utilisateur
   void _montrerErreur(String message) {
     if (!mounted) return;
+    final theme = Theme.of(context);
+    
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text(message, style: const TextStyle(color: Colors.white)),
-        backgroundColor: Colors.red.shade800,
+        content: Text(message, style: TextStyle(color: theme.colorScheme.onError)),
+        backgroundColor: theme.colorScheme.error,
         behavior: SnackBarBehavior.floating,
         duration: const Duration(seconds: 4),
         action: SnackBarAction(
           label: 'OK',
-          textColor: Colors.white,
+          textColor: theme.colorScheme.onError,
           onPressed: () {},
         ),
       ),
@@ -231,11 +233,12 @@ class _EcranAccueilState extends State<EcranAccueil> with WidgetsBindingObserver
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context); // NOUVEAU : Récupération du thème
+
     return Scaffold(
       appBar: AppBar(
         title: const Text('Choisir le mur'),
-        backgroundColor: Theme.of(context).colorScheme.inversePrimary,
-        elevation: 0, // Design plus flat
+        // L'AppBar prend automatiquement ses couleurs depuis le thème désormais
       ),
       body: Stack(
         children: [
@@ -249,7 +252,7 @@ class _EcranAccueilState extends State<EcranAccueil> with WidgetsBindingObserver
                   decoration: BoxDecoration(
                     borderRadius: BorderRadius.circular(20),
                     boxShadow: [
-                      BoxShadow(color: Colors.black.withValues(alpha: 0.1), blurRadius: 20, spreadRadius: 2)
+                      BoxShadow(color: theme.shadowColor.withValues(alpha: 0.1), blurRadius: 20, spreadRadius: 2)
                     ],
                   ),
                   child: ClipRRect(
@@ -264,7 +267,6 @@ class _EcranAccueilState extends State<EcranAccueil> with WidgetsBindingObserver
                                 child: SizedBox(
                                   width: _controller!.value.previewSize?.height ?? 1,
                                   height: _controller!.value.previewSize?.width ?? 1,
-                                  // AJOUT ANIMATION HERO ICI
                                   child: Hero(
                                     tag: 'image_mur',
                                     child: CameraPreview(_controller!),
@@ -287,7 +289,7 @@ class _EcranAccueilState extends State<EcranAccueil> with WidgetsBindingObserver
                               ),
                             ],
                           )
-                        : const Center(child: CircularProgressIndicator()),
+                        : Center(child: CircularProgressIndicator(color: theme.colorScheme.primary)),
                   ),
                 ),
               ),
@@ -308,8 +310,8 @@ class _EcranAccueilState extends State<EcranAccueil> with WidgetsBindingObserver
                           style: ElevatedButton.styleFrom(
                             elevation: 0,
                             padding: const EdgeInsets.symmetric(horizontal: 30, vertical: 15),
-                            backgroundColor: Colors.teal.withValues(alpha: 0.1), // Subtile touche de couleur
-                            foregroundColor: Colors.teal,
+                            backgroundColor: theme.colorScheme.primary.withValues(alpha: 0.1), // S'adapte au mode sombre
+                            foregroundColor: theme.colorScheme.primary,
                             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)), // Bouton très arrondi
                           ),
                         ),
@@ -319,10 +321,10 @@ class _EcranAccueilState extends State<EcranAccueil> with WidgetsBindingObserver
                           label: const Text('Photo'),
                           style: ElevatedButton.styleFrom(
                             elevation: 4,
-                            shadowColor: Colors.teal.withValues(alpha: 0.4),
+                            shadowColor: theme.colorScheme.primary.withValues(alpha: 0.4),
                             padding: const EdgeInsets.symmetric(horizontal: 30, vertical: 15),
-                            backgroundColor: Theme.of(context).colorScheme.primary,
-                            foregroundColor: Theme.of(context).colorScheme.onPrimary,
+                            backgroundColor: theme.colorScheme.primary,
+                            foregroundColor: theme.colorScheme.onPrimary,
                             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)), // Bouton très arrondi
                           ),
                         ),
@@ -330,14 +332,14 @@ class _EcranAccueilState extends State<EcranAccueil> with WidgetsBindingObserver
                     ),
                     // Affiche un indicateur de chargement pendant que l'IA s'initialise.
                     if (!_isIaReady)
-                      const Padding(
-                        padding: EdgeInsets.only(top: 15.0),
+                      Padding(
+                        padding: const EdgeInsets.only(top: 15.0),
                         child: Row(
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
-                            SizedBox(width: 15, height: 15, child: CircularProgressIndicator(strokeWidth: 2)),
-                            SizedBox(width: 10),
-                            Text("Chargement du moteur IA...", style: TextStyle(color: Colors.grey, fontStyle: FontStyle.italic)),
+                            SizedBox(width: 15, height: 15, child: CircularProgressIndicator(strokeWidth: 2, color: theme.colorScheme.primary)),
+                            const SizedBox(width: 10),
+                            Text("Chargement du moteur IA...", style: TextStyle(color: theme.colorScheme.onSurface.withValues(alpha: 0.5), fontStyle: FontStyle.italic)),
                           ],
                         ),
                       ),
@@ -352,7 +354,7 @@ class _EcranAccueilState extends State<EcranAccueil> with WidgetsBindingObserver
             BackdropFilter(
               filter: ImageFilter.blur(sigmaX: 5.0, sigmaY: 5.0),
               child: Container(
-                color: Colors.black.withValues(alpha: 0.4),
+                color: Colors.black.withValues(alpha: 0.4), // On garde le noir pour l'effet de verre, c'est neutre
                 child: const Center(
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
@@ -388,6 +390,7 @@ class _NiveauBullePainter extends CustomPainter {
     bool isAligned = xTilt.abs() < 0.6 && yTilt.abs() < 0.6;
     
     // 1. Dessin de la cible centrale (Le viseur fixe)
+    // On garde les couleurs "en dur" ici car c'est un calque par dessus la caméra (qui est toujours sombre/naturelle)
     final targetColor = isAligned ? Colors.greenAccent : Colors.white.withValues(alpha: 0.6);
     final targetPaint = Paint()
       ..color = targetColor

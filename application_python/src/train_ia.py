@@ -16,26 +16,25 @@ if __name__ == '__main__':
 
     print("[IA] Lancement de l'entraînement de haute précision...")
     results = model.train(
-        data=CHEMIN_DATA_YAML, 
-        epochs=300,
-        patience=50, 
-        imgsz=IMGSZ,
+        data = CHEMIN_DATA_YAML, 
+        epochs = 300,
+        patience = 50, 
+        imgsz = IMGSZ,
+        batch = 4,
+        device = 0, 
+        workers = 0,
         
-        # On garde un batch de 4 pour ne pas saturer la RTX 3060
-        batch=4,
-        device=0, 
-        
-        # Le fix Windows pour éviter le crash de la mémoire
-        workers=0,
-        
-        fliplr=0.0,
-        flipud=0.0,
-        mosaic=0.0,
-        degrees=0.0,
+        fliplr = 0.0,
+        flipud = 0.0,
+        degrees = 0.0,
+        mosaic = 0.5,
+        scale = 0.5,
         
         # Ajustement des pénalités pour se concentrer sur la précision des 4 coins
-        pose=35.0,
-        box=15.0
+        pose = 25.0,
+        box = 25.0,
+        dfl = 3.0,
+        cls = 1.0
     )
     
     # ==========================================

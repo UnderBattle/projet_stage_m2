@@ -59,16 +59,15 @@ class InpaintingCore {
       int cropX = (rect.x + rect.width / 2 - cropS / 2).toInt();
       int cropY = (rect.y + rect.height / 2 - cropS / 2).toInt();
       
-      // Sécurisation des bords
+      if (cropS > wMur) cropS = wMur;
+      if (cropS > hMur) cropS = hMur;
       if (cropX < 0) cropX = 0;
       if (cropY < 0) cropY = 0;
       if (cropX + cropS > wMur) cropX = wMur - cropS;
       if (cropY + cropS > hMur) cropY = hMur - cropS;
-      if (cropS > wMur) cropS = wMur;
-      if (cropS > hMur) cropS = hMur;
 
       cropRect = cv.Rect(cropX, cropY, cropS, cropS);
-      cv.Mat cropImg = murMat.region(cropRect).clone(); 
+      cv.Mat cropImg = murMat.region(cropRect).clone();
       cv.Mat cropMaskLama = maskLama.region(cropRect);
 
       // =========================================================================

@@ -15,6 +15,7 @@ class GoulottePainter extends CustomPainter {
   final double thicknessOrig; 
   final bool showLine; // Gère l'affichage du corps de la goulotte
   final bool showNodes; // Gère l'affichage des nœuds bleus (ronds)
+  final Color primaryColor; // NOUVEAU : Couleur thématique injectée
 
   GoulottePainter({
     required this.goulotte, 
@@ -24,6 +25,7 @@ class GoulottePainter extends CustomPainter {
     required this.thicknessOrig, 
     required this.showLine,
     required this.showNodes,
+    required this.primaryColor,
   });
 
   @override
@@ -45,9 +47,9 @@ class GoulottePainter extends CustomPainter {
 
     // Indicateurs nodaux (les ronds) pour montrer à l'utilisateur où grab/tirer la ligne
     if (showNodes) {
-      final paintHandle = Paint()..color = Colors.white; // Anneaux blancs au lieu de ronds bleus pleins
+      final paintHandle = Paint()..color = Colors.white; // Anneaux blancs
       final paintHandleBorder = Paint()
-        ..color = Colors.teal
+        ..color = primaryColor // S'adapte au thème !
         ..style = PaintingStyle.stroke
         ..strokeWidth = 2.5; 
       
@@ -83,15 +85,18 @@ class SplitClipper extends CustomClipper<Rect> {
 /// CustomPainter utilisé pour dessiner la zone de sélection manuelle (Bounding Box) et sa surface bleutée.
 class BoundingBoxPainter extends CustomPainter {
   final List<Offset> points;
-  BoundingBoxPainter({required this.points});
+  final Color primaryColor; // NOUVEAU : Couleur thématique injectée
+
+  BoundingBoxPainter({required this.points, required this.primaryColor});
 
   @override
   void paint(Canvas canvas, Size size) {
     if (points.length != 4) return;
     
+    // AFFINAGE EXTRÊME DE LA BORDURE
     final paint = Paint()
-      ..color = Colors.teal // Adapté à la charte graphique
-      ..strokeWidth = 3.0
+      ..color = primaryColor 
+      ..strokeWidth = 1.0 // TRÈS FIN (Avant: 2.0)
       ..style = PaintingStyle.stroke;
       
     final path = Path()
@@ -103,9 +108,12 @@ class BoundingBoxPainter extends CustomPainter {
       
     canvas.drawPath(path, paint);
 
-    // Dessine de légers crochets dans les angles pour un aspect viseur d'appareil photo
-    double cornerLength = 20.0;
-    final cornerPaint = Paint()..color = Colors.teal..strokeWidth = 5.0..style = PaintingStyle.stroke;
+    // Dessine de très légers crochets dans les angles pour un aspect viseur d'appareil photo
+    double cornerLength = 10.0; // Beaucoup plus court (Avant: 15.0)
+    final cornerPaint = Paint()
+      ..color = primaryColor
+      ..strokeWidth = 2.0 // Ligne fine (Avant: 3.0)
+      ..style = PaintingStyle.stroke;
     
     for (int i = 0; i < 4; i++) {
       Offset p = points[i];
@@ -123,7 +131,7 @@ class BoundingBoxPainter extends CustomPainter {
     }
 
     final fillPaint = Paint()
-      ..color = Colors.teal.withValues(alpha: 0.15)
+      ..color = primaryColor.withValues(alpha: 0.15)
       ..style = PaintingStyle.fill;
     canvas.drawPath(path, fillPaint);
   }

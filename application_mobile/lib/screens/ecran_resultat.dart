@@ -52,6 +52,9 @@ class _EcranResultatState extends State<EcranResultat> {
   int? _imageHeight;
   List<Map<String, double>>? _pointsCibles;
   bool _isManualPlacementMode = false;
+  
+  // NOUVEAU : Gère l'affichage de la carte de confirmation en bas de l'écran
+  bool _attenteConfirmationIA = false;
 
   // Sécurité pour ne charger le catalogue en RAM qu'une seule fois
   bool _isCatalogPrecached = false;
@@ -66,7 +69,7 @@ class _EcranResultatState extends State<EcranResultat> {
   final ValueNotifier<double> _splitNotifier = ValueNotifier(1.0);
   final ValueNotifier<bool> _isDraggingEquipementNotifier = ValueNotifier(false);
 
-  // AJOUT : Pile d'historique pour annuler les déplacements successifs de l'équipement
+  // Pile d'historique pour annuler les déplacements successifs de l'équipement
   final List<Offset> _historiqueDecalages = [Offset.zero];
   
   // OPTIMISATION : Notifier ultra-léger pour dire au bouton Undo de s'afficher SANS recalculer à chaque frame du glissement
@@ -146,15 +149,17 @@ class _EcranResultatState extends State<EcranResultat> {
   /// Affiche une bannière d'erreur visible pour l'utilisateur
   void _montrerErreur(String message) {
     if (!mounted) return;
+    final theme = Theme.of(context);
+    
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text(message, style: const TextStyle(color: Colors.white)),
-        backgroundColor: Colors.red.shade800,
+        content: Text(message, style: TextStyle(color: theme.colorScheme.onError)),
+        backgroundColor: theme.colorScheme.error,
         behavior: SnackBarBehavior.floating,
         duration: const Duration(seconds: 4),
         action: SnackBarAction(
           label: 'OK',
-          textColor: Colors.white,
+          textColor: theme.colorScheme.onError,
           onPressed: () {},
         ),
       ),
@@ -275,19 +280,13 @@ class _EcranResultatState extends State<EcranResultat> {
         }
 
         if (_pointsCibles != null) {
-          setState(() => _loadingMessage = "Nettoyage du mur en cours...");
-          _imageFondPropreBytes = await TraitementImage.effacerAutocollantWorker({
-            'photoPath': widget.photoPath,
-            'pointsIA': _pointsCibles!,
-            'lamaBytes': IAService().lamaBytes,
+          // L'IA a trouvé la zone : On affiche la bounding box et on montre le panel en bas
+          setState(() {
+            _isProcessing = false;
+            _isManualPlacementMode = true; 
+            _attenteConfirmationIA = true; // Déclenche l'affichage du menu "Oui / Non"
           });
-          _imageFondAvecGoulotteBytes = null; // Sécurité Cache
-          _calqueEquipementPngBytes = null;
         }
-        
-        setState(() {
-          _isProcessing = false;
-        });
       } else {
         setState(() {
           _pointsCibles = null;
@@ -311,17 +310,21 @@ class _EcranResultatState extends State<EcranResultat> {
   }
 
   void _demanderPlacementManuel() {
+    final theme = Theme.of(context);
+    
+    // On conserve la Pop-up ici car l'IA a complètement échoué, on oblige l'utilisateur à choisir.
     showDialog(
       context: context,
       barrierDismissible: false,
       builder: (context) => AlertDialog(
-        title: const Text("Autocollant introuvable"),
-        content: const Text("L'IA n'a pas pu détecter l'autocollant avec certitude.\nVoulez-vous placer la zone manuellement ?"),
+        backgroundColor: theme.cardColor,
+        title: Text("Autocollant introuvable", style: TextStyle(color: theme.colorScheme.onSurface)),
+        content: Text("L'IA n'a pas pu détecter l'autocollant avec certitude.\nVoulez-vous placer la zone manuellement ?", style: TextStyle(color: theme.colorScheme.onSurface)),
         actions: [
           ElevatedButton.icon(
             icon: const Icon(Icons.touch_app),
             label: const Text("Placer manuellement"),
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.teal, foregroundColor: Colors.white),
+            style: ElevatedButton.styleFrom(backgroundColor: theme.colorScheme.primary, foregroundColor: theme.colorScheme.onPrimary),
             onPressed: () {
               Navigator.pop(context);
               _activerModeManuel();
@@ -332,7 +335,7 @@ class _EcranResultatState extends State<EcranResultat> {
               Navigator.pop(context); 
               Navigator.pop(context); 
             },
-            child: const Text("Annuler", style: TextStyle(color: Colors.grey)),
+            child: Text("Annuler", style: TextStyle(color: theme.colorScheme.onSurface.withValues(alpha: 0.6))),
           ),
         ],
       ),
@@ -342,6 +345,7 @@ class _EcranResultatState extends State<EcranResultat> {
   void _activerModeManuel() {
     setState(() {
       _isManualPlacementMode = true;
+      _attenteConfirmationIA = false; // On n'a pas besoin de confirmer l'IA puisqu'elle a échoué
       _pointsCibles = [
         {'x': 512.0 - 75.0, 'y': 512.0 - 150.0}, // Haut Gauche
         {'x': 512.0 + 75.0, 'y': 512.0 - 150.0}, // Haut Droit
@@ -356,7 +360,7 @@ class _EcranResultatState extends State<EcranResultat> {
     setState(() {
       _isManualPlacementMode = false;
       _isProcessing = true;
-      _loadingMessage = "Nettoyage de la zone manuelle...";
+      _loadingMessage = "Nettoyage de la zone sélectionnée..."; 
       _pointsCibles = TraitementImage.trierPoints(_pointsCibles!); 
     });
 
@@ -527,7 +531,7 @@ class _EcranResultatState extends State<EcranResultat> {
   // === UI : DÉCOUPAGE EN WIDGETS (POUR ALLÉGER LE BUILD) ===
   // =========================================================================
 
-  Widget _buildCalquePlacementManuel(double scale, double offsetX, double offsetY) {
+  Widget _buildCalquePlacementManuel(double scale, double offsetX, double offsetY, ThemeData theme) {
     List<Offset> screenPoints = _pointsCibles!.map((p) {
       double pxOrig = p['x']! * (_imageWidth! / 1024.0);
       double pyOrig = p['y']! * (_imageHeight! / 1024.0);
@@ -542,13 +546,12 @@ class _EcranResultatState extends State<EcranResultat> {
     return Stack(
       children: [
         Positioned.fill(
-          // AJOUT ANIMATION HERO ICI
           child: Hero(
             tag: 'image_mur',
             child: Image.file(File(widget.photoPath), fit: BoxFit.contain),
           )
         ),
-        Positioned.fill(child: CustomPaint(painter: BoundingBoxPainter(points: screenPoints))),
+        Positioned.fill(child: CustomPaint(painter: BoundingBoxPainter(points: screenPoints, primaryColor: theme.colorScheme.primary))),
         
         Positioned(
           left: minX,
@@ -557,6 +560,12 @@ class _EcranResultatState extends State<EcranResultat> {
           height: maxY - minY,
           child: GestureDetector(
             behavior: HitTestBehavior.opaque,
+            onPanStart: (_) {
+              // Si l'utilisateur commence à bouger la boîte, on cache la question de l'IA
+              if (_attenteConfirmationIA) {
+                setState(() => _attenteConfirmationIA = false);
+              }
+            },
             onPanUpdate: (details) {
               // Sécurité : on ignore le déplacement si plusieurs doigts sont détectés
               if (_activePointers > 1) return;
@@ -593,10 +602,17 @@ class _EcranResultatState extends State<EcranResultat> {
           int idx = entry.key;
           Offset pt = entry.value;
           return Positioned(
+            // On garde une zone tactile de 30x30 pour que ce soit facile à attraper, donc décalage de -15
             left: pt.dx - 15, 
-            top: pt.dy - 15,
+            top: pt.dy - 15,  
             child: GestureDetector(
               behavior: HitTestBehavior.opaque, 
+              onPanStart: (_) {
+                // Si l'utilisateur attrape un point, on cache la question de l'IA
+                if (_attenteConfirmationIA) {
+                  setState(() => _attenteConfirmationIA = false);
+                }
+              },
               onPanUpdate: (details) {
                 // Sécurité multi-touch
                 if (_activePointers > 1) return;
@@ -612,17 +628,17 @@ class _EcranResultatState extends State<EcranResultat> {
                 });
               },
               child: Container(
-                width: 30, 
-                height: 30,
+                width: 30, // Zone tactile invisible assez grande
+                height: 30, 
                 color: Colors.transparent, 
                 alignment: Alignment.center,
                 child: Container(
-                  width: 18, 
-                  height: 18,
+                  width: 8, // Le rond visuel devient très fin (Avant: 12)
+                  height: 8, 
                   decoration: BoxDecoration(
-                    color: Colors.blueAccent.withValues(alpha: 0.3),
+                    color: theme.colorScheme.primary.withValues(alpha: 0.5),
                     shape: BoxShape.circle,
-                    border: Border.all(color: Colors.blueAccent, width: 2), 
+                    border: Border.all(color: theme.colorScheme.primary, width: 1.0), // Bordure fine
                   ),
                 ),
               ),
@@ -800,7 +816,7 @@ class _EcranResultatState extends State<EcranResultat> {
     ];
   }
 
-  Widget _buildCalqueResultat(double scale, double offsetX, double offsetY, BoxConstraints constraints) {
+  Widget _buildCalqueResultat(double scale, double offsetX, double offsetY, BoxConstraints constraints, ThemeData theme) {
     double ptHgXOrig = _pointsCibles![0]['x']! * (_imageWidth! / 1024.0);
     double ptHgYOrig = _pointsCibles![0]['y']! * (_imageHeight! / 1024.0);
     double ptHdXOrig = _pointsCibles![1]['x']! * (_imageWidth! / 1024.0);
@@ -849,13 +865,11 @@ class _EcranResultatState extends State<EcranResultat> {
                     imgToShow = _imageFondAvecGoulotteBytes ?? _imageFondPropreBytes;
                   }
                   if (imgToShow == null) {
-                    // AJOUT ANIMATION HERO ICI (Fallback si chargement)
                     return Hero(
                       tag: 'image_mur',
                       child: Image.file(File(widget.photoPath), fit: BoxFit.contain)
                     );
                   }
-                  // AJOUT ANIMATION HERO ICI (Image rendue)
                   return Hero(
                     tag: 'image_mur',
                     child: Image.memory(imgToShow, fit: BoxFit.contain, gaplessPlayback: true)
@@ -939,6 +953,7 @@ class _EcranResultatState extends State<EcranResultat> {
                             thicknessOrig: largeurGoulotteOrig,
                             showLine: showLine,
                             showNodes: showNodes,
+                            primaryColor: theme.colorScheme.primary, // Injecte la couleur de la marque
                           ),
                         );
                       }
@@ -982,7 +997,7 @@ class _EcranResultatState extends State<EcranResultat> {
                               width: 4, 
                               decoration: BoxDecoration(
                                 color: Colors.white,
-                                boxShadow: [BoxShadow(color: Colors.teal.withValues(alpha: 0.5), blurRadius: 8, spreadRadius: 1)]
+                                boxShadow: [BoxShadow(color: theme.colorScheme.primary.withValues(alpha: 0.5), blurRadius: 8, spreadRadius: 1)]
                               ),
                             ),
                             Positioned(
@@ -995,7 +1010,7 @@ class _EcranResultatState extends State<EcranResultat> {
                                   borderRadius: BorderRadius.circular(20),
                                   boxShadow: const [BoxShadow(color: Colors.black38, blurRadius: 8, spreadRadius: 1)]
                                 ),
-                                child: const Icon(Icons.compare_arrows, size: 20, color: Colors.teal),
+                                child: Icon(Icons.compare_arrows, size: 20, color: theme.colorScheme.primary), // Adapté au thème
                               ),
                             ),
                           ],
@@ -1162,6 +1177,7 @@ class _EcranResultatState extends State<EcranResultat> {
                             thicknessOrig: largeurGoulotteOrig,
                             showLine: true, 
                             showNodes: true, // Affiche les nœuds pendant la création
+                            primaryColor: theme.colorScheme.primary, // Injecte la couleur du thème
                           ),
                         );
                       },
@@ -1190,11 +1206,11 @@ class _EcranResultatState extends State<EcranResultat> {
               left: magPos.dx - 60, // 60 = moitié de la largeur de la loupe (120/2)
               top: magPos.dy - 130, // Décale vers le haut
               child: RawMagnifier(
-                decoration: const MagnifierDecoration(
+                decoration: MagnifierDecoration(
                   shape: CircleBorder(
-                    side: BorderSide(color: Colors.teal, width: 2),
+                    side: BorderSide(color: theme.colorScheme.primary, width: 2), // Bordure colorée avec le thème
                   ),
-                  shadows: [
+                  shadows: const [
                     BoxShadow(color: Colors.black26, blurRadius: 8, spreadRadius: 2)
                   ],
                 ),
@@ -1216,11 +1232,12 @@ class _EcranResultatState extends State<EcranResultat> {
   // =========================================================================
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context); // NOUVEAU : Récupération du thème actif
+
     return Scaffold(
       appBar: AppBar(
         title: const Text('Configuration du Devis'),
-        backgroundColor: Theme.of(context).colorScheme.inversePrimary,
-        elevation: 0,
+        // L'AppBar utilise automatiquement les couleurs du thème global
       ),
       // Permet de compter le nombre de doigts à l'écran
       body: Listener(
@@ -1250,7 +1267,7 @@ class _EcranResultatState extends State<EcranResultat> {
                 margin: const EdgeInsets.only(left: 16.0, right: 16.0, top: 16.0, bottom: 8.0),
                 decoration: BoxDecoration(
                   borderRadius: BorderRadius.circular(20),
-                  boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.1), blurRadius: 15, spreadRadius: 1)],
+                  boxShadow: [BoxShadow(color: theme.shadowColor.withValues(alpha: 0.1), blurRadius: 15, spreadRadius: 1)], // Ombre thématique
                 ),
                 child: Stack(
                   children: [
@@ -1273,7 +1290,6 @@ class _EcranResultatState extends State<EcranResultat> {
                               child: LayoutBuilder(
                                 builder: (context, constraints) {
                                   if (_imageWidth == null || _imageHeight == null) {
-                                     // AJOUT ANIMATION HERO ICI
                                      return Hero(
                                        tag: 'image_mur',
                                        child: Image.file(File(widget.photoPath), fit: BoxFit.contain)
@@ -1281,7 +1297,6 @@ class _EcranResultatState extends State<EcranResultat> {
                                   }
 
                                   if (_pointsCibles == null && !_isManualPlacementMode) {
-                                     // AJOUT ANIMATION HERO ICI
                                      return Hero(
                                        tag: 'image_mur',
                                        child: Image.file(File(widget.photoPath), fit: BoxFit.contain)
@@ -1293,9 +1308,9 @@ class _EcranResultatState extends State<EcranResultat> {
                                   double offsetY = (constraints.maxHeight - (_imageHeight! * scale)) / 2;
 
                                   if (_isManualPlacementMode) {
-                                    return _buildCalquePlacementManuel(scale, offsetX, offsetY);
+                                    return _buildCalquePlacementManuel(scale, offsetX, offsetY, theme); // Injection du thème
                                   } else {
-                                    return _buildCalqueResultat(scale, offsetX, offsetY, constraints);
+                                    return _buildCalqueResultat(scale, offsetX, offsetY, constraints, theme); // Injection du thème
                                   }
                                 },
                               ),
@@ -1346,7 +1361,7 @@ class _EcranResultatState extends State<EcranResultat> {
                                return BackdropFilter(
                                 filter: ImageFilter.blur(sigmaX: 5.0, sigmaY: 5.0),
                                 child: Container(
-                                  color: Colors.black.withValues(alpha: 0.4),
+                                  color: Colors.black.withValues(alpha: 0.4), // On garde le noir pour l'effet de verre fumé (même en light mode)
                                   child: Center(
                                     child: Column(
                                       mainAxisSize: MainAxisSize.min,
@@ -1397,25 +1412,72 @@ class _EcranResultatState extends State<EcranResultat> {
         ),
       ),
       
-      floatingActionButton: _isManualPlacementMode
-          ? FloatingActionButton.extended(
-              onPressed: _validerPlacementManuel,
-              label: const Text("Valider la position", style: TextStyle(fontWeight: FontWeight.bold)),
-              icon: const Icon(Icons.check),
-              backgroundColor: Colors.blueAccent,
-              foregroundColor: Colors.white,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)),
+      // =========================================================================
+      // === LOGIQUE DES BOUTONS FLOTTANTS (EN BAS DE L'ÉCRAN) ===
+      // =========================================================================
+      floatingActionButton: _attenteConfirmationIA 
+          // 1. CARTE DE CONFIRMATION DE L'IA (Remplaçant l'ancien AlertDialog bloquant)
+          ? Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16.0),
+              child: Card(
+                elevation: 8,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                color: theme.cardColor,
+                child: Padding(
+                  padding: const EdgeInsets.all(16.0),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text("Détection automatique", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: theme.colorScheme.onSurface)),
+                      const SizedBox(height: 8),
+                      Text("L'IA a détecté l'autocollant. Cette sélection vous convient-elle ?", style: TextStyle(color: theme.colorScheme.onSurface.withValues(alpha: 0.8)), textAlign: TextAlign.center),
+                      const SizedBox(height: 16),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                        children: [
+                          TextButton(
+                            onPressed: () {
+                              setState(() {
+                                _attenteConfirmationIA = false;
+                              });
+                            },
+                            child: Text("Ajuster", style: TextStyle(color: theme.colorScheme.onSurface.withValues(alpha: 0.6))),
+                          ),
+                          ElevatedButton.icon(
+                            icon: const Icon(Icons.check, size: 18),
+                            label: const Text("Oui, valider"),
+                            style: ElevatedButton.styleFrom(backgroundColor: theme.colorScheme.primary, foregroundColor: theme.colorScheme.onPrimary),
+                            onPressed: () {
+                              setState(() {
+                                _attenteConfirmationIA = false;
+                              });
+                              _validerPlacementManuel(); // IA validée, on passe à l'inpainting
+                            },
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ),
             )
-          : (_imageResultatBytes != null && !_isProcessing)
+          // 2. BOUTON DE VALIDATION DU MODE MANUEL (Ajustement humain)
+          : _isManualPlacementMode
               ? FloatingActionButton.extended(
-                  onPressed: _sauvegarderImage,
-                  label: const Text("Sauvegarder", style: TextStyle(fontWeight: FontWeight.bold)),
-                  icon: const Icon(Icons.download),
-                  backgroundColor: Theme.of(context).colorScheme.primary,
-                  foregroundColor: Colors.white,
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)),
+                  onPressed: _validerPlacementManuel,
+                  label: const Text("Valider la position", style: TextStyle(fontWeight: FontWeight.bold)),
+                  icon: const Icon(Icons.check),
+                  // La couleur provient automatiquement de floatingActionButtonTheme
                 )
-              : null,
+          // 3. BOUTON DE SAUVEGARDE FINALE
+              : (_imageResultatBytes != null && !_isProcessing)
+                  ? FloatingActionButton.extended(
+                      onPressed: _sauvegarderImage,
+                      label: const Text("Sauvegarder", style: TextStyle(fontWeight: FontWeight.bold)),
+                      icon: const Icon(Icons.download),
+                      // La couleur provient automatiquement de floatingActionButtonTheme
+                    )
+                  : null,
       floatingActionButtonLocation: FloatingActionButtonLocation.centerFloat,
     );
   }

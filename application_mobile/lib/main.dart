@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:camera/camera.dart';
 import 'screens/ecran_accueil.dart';
 import 'utils/image_utils.dart';
+import 'theme/app_theme.dart'; // NOUVEAU : Importation du thème global
 
 /// Liste globale contenant les caméras disponibles sur l'appareil.
 List<CameraDescription> cameras = [];
@@ -30,15 +31,10 @@ class MonApplication extends StatelessWidget {
     return MaterialApp(
       title: 'Simulateur d\'Installation', // Titre généralisé
       debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        // Utilisation d'un Teal plus profond et moderne pour l'UI globale
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: const Color(0xFF00796B), 
-          primary: const Color(0xFF00796B),
-          surface: const Color(0xFFF5F7FA), // Fond très légèrement grisé pour faire ressortir le blanc
-        ),
-        useMaterial3: true,
-      ),
+      theme: AppTheme.lightTheme,
+      darkTheme: AppTheme.darkTheme,
+      themeMode: ThemeMode.dark, // S'adapte automatiquement au réglage du téléphone
+      
       // Passe la liste des caméras à l'écran d'accueil pour initialiser l'appareil photo.
       home: EcranAccueil(cameras: cameras), 
     );
