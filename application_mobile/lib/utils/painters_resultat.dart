@@ -85,18 +85,23 @@ class SplitClipper extends CustomClipper<Rect> {
 /// CustomPainter utilisé pour dessiner la zone de sélection manuelle (Bounding Box) et sa surface bleutée.
 class BoundingBoxPainter extends CustomPainter {
   final List<Offset> points;
-  final Color primaryColor; // NOUVEAU : Couleur thématique injectée
+  final Color primaryColor; 
+  final double zoomScale; // NOUVEAU : Permet de compenser le zoom de la loupe
 
-  BoundingBoxPainter({required this.points, required this.primaryColor});
+  BoundingBoxPainter({
+    required this.points, 
+    required this.primaryColor,
+    this.zoomScale = 1.0, // Par défaut 1.0 (pas de zoom)
+  });
 
   @override
   void paint(Canvas canvas, Size size) {
     if (points.length != 4) return;
     
-    // AFFINAGE EXTRÊME DE LA BORDURE
+    // COMPENSATON DYNAMIQUE DU ZOOM + EPAISSISSEMENT (+2px)
     final paint = Paint()
       ..color = primaryColor 
-      ..strokeWidth = 1.0 // TRÈS FIN (Avant: 2.0)
+      ..strokeWidth = 3.0 / zoomScale // ÉPAISSI : 3.0 au lieu de 1.0
       ..style = PaintingStyle.stroke;
       
     final path = Path()
@@ -109,10 +114,10 @@ class BoundingBoxPainter extends CustomPainter {
     canvas.drawPath(path, paint);
 
     // Dessine de très légers crochets dans les angles pour un aspect viseur d'appareil photo
-    double cornerLength = 10.0; // Beaucoup plus court (Avant: 15.0)
+    double cornerLength = 12.0 / zoomScale; // S'adapte au zoom
     final cornerPaint = Paint()
       ..color = primaryColor
-      ..strokeWidth = 2.0 // Ligne fine (Avant: 3.0)
+      ..strokeWidth = 4.0 / zoomScale // ÉPAISSI : 4.0 au lieu de 2.0
       ..style = PaintingStyle.stroke;
     
     for (int i = 0; i < 4; i++) {
@@ -137,5 +142,5 @@ class BoundingBoxPainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(BoundingBoxPainter oldDelegate) => true;
+  bool shouldRepaint(BoundingBoxPainter oldDelegate) => true; // Toujours redessiner lors du zoom
 }

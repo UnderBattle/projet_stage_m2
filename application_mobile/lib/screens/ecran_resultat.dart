@@ -263,7 +263,9 @@ class _EcranResultatState extends State<EcranResultat> {
         }
         confMoyennePoints = confMoyennePoints / 4.0;
 
-        if (confMoyennePoints >= 0.92) {
+        print("[IA] Confiance moyenne des points : $confMoyennePoints");
+
+        if (confMoyennePoints >= 0.9875) {
           _pointsCibles = TraitementImage.trierPoints(rawPoints);
         } else {
           double xMin = (boxX * scale) - (boxW * scale) / 2;
@@ -543,109 +545,139 @@ class _EcranResultatState extends State<EcranResultat> {
     double minY = screenPoints.map((p) => p.dy).reduce(math.min);
     double maxY = screenPoints.map((p) => p.dy).reduce(math.max);
 
-    return Stack(
-      children: [
-        Positioned.fill(
-          child: Hero(
-            tag: 'image_mur',
-            child: Image.file(File(widget.photoPath), fit: BoxFit.contain),
-          )
-        ),
-        Positioned.fill(child: CustomPaint(painter: BoundingBoxPainter(points: screenPoints, primaryColor: theme.colorScheme.primary))),
+    // COMPENSATON DYNAMIQUE DU ZOOM : On écoute le contrôleur d'InteractiveViewer
+    return ValueListenableBuilder<Matrix4>(
+      valueListenable: _transformationController,
+      builder: (context, matrix, _) {
         
-        Positioned(
-          left: minX,
-          top: minY,
-          width: maxX - minX,
-          height: maxY - minY,
-          child: GestureDetector(
-            behavior: HitTestBehavior.opaque,
-            onPanStart: (_) {
-              // Si l'utilisateur commence à bouger la boîte, on cache la question de l'IA
-              if (_attenteConfirmationIA) {
-                setState(() => _attenteConfirmationIA = false);
-              }
-            },
-            onPanUpdate: (details) {
-              // Sécurité : on ignore le déplacement si plusieurs doigts sont détectés
-              if (_activePointers > 1) return;
-              
-              setState(() {
-                double dxOrig = details.delta.dx / scale;
-                double dyOrig = details.delta.dy / scale;
-                double dx1024 = dxOrig * (1024.0 / _imageWidth!);
-                double dy1024 = dyOrig * (1024.0 / _imageHeight!);
-                
-                bool canMove = true;
-                for (var p in _pointsCibles!) {
-                  double newX = p['x']! + dx1024;
-                  double newY = p['y']! + dy1024;
-                  if (newX < 0 || newX > 1024 || newY < 0 || newY > 1024) {
-                    canMove = false;
-                    break;
-                  }
-                }
-                
-                if (canMove) {
-                  for (int i = 0; i < 4; i++) {
-                    _pointsCibles![i]['x'] = _pointsCibles![i]['x']! + dx1024;
-                    _pointsCibles![i]['y'] = _pointsCibles![i]['y']! + dy1024;
-                  }
-                }
-              });
-            },
-            child: Container(color: Colors.transparent),
-          ),
-        ),
+        // Calcule à quel point l'utilisateur a zoomé (ex: 2.0 pour x2)
+        double currentZoom = matrix.getMaxScaleOnAxis();
+        if (currentZoom <= 0) currentZoom = 1.0;
+        
+        // Le ratio inverse : si on zoome x4, on doit dessiner x0.25 pour que ça reste de la même taille physique !
+        double invZoom = 1.0 / currentZoom;
 
-        ...screenPoints.asMap().entries.map((entry) {
-          int idx = entry.key;
-          Offset pt = entry.value;
-          return Positioned(
-            // On garde une zone tactile de 30x30 pour que ce soit facile à attraper, donc décalage de -15
-            left: pt.dx - 15, 
-            top: pt.dy - 15,  
-            child: GestureDetector(
-              behavior: HitTestBehavior.opaque, 
-              onPanStart: (_) {
-                // Si l'utilisateur attrape un point, on cache la question de l'IA
-                if (_attenteConfirmationIA) {
-                  setState(() => _attenteConfirmationIA = false);
-                }
-              },
-              onPanUpdate: (details) {
-                // Sécurité multi-touch
-                if (_activePointers > 1) return;
-                
-                setState(() {
-                  double dxOrig = details.delta.dx / scale;
-                  double dyOrig = details.delta.dy / scale;
-                  double dx1024 = dxOrig * (1024.0 / _imageWidth!);
-                  double dy1024 = dyOrig * (1024.0 / _imageHeight!);
+        return Stack(
+          children: [
+            Positioned.fill(
+              child: Hero(
+                tag: 'image_mur',
+                child: Image.file(File(widget.photoPath), fit: BoxFit.contain),
+              )
+            ),
+            
+            // Le dessinateur va utiliser currentZoom pour diviser l'épaisseur du pinceau
+            Positioned.fill(
+              child: CustomPaint(
+                painter: BoundingBoxPainter(
+                  points: screenPoints, 
+                  primaryColor: Colors.blueAccent, // FORCE LE BLEU (Meilleur contraste)
+                  zoomScale: currentZoom, // On passe le zoom !
+                )
+              )
+            ),
+            
+            Positioned(
+              left: minX,
+              top: minY,
+              width: maxX - minX,
+              height: maxY - minY,
+              child: GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onPanStart: (_) {
+                  // Si l'utilisateur commence à bouger la boîte, on cache la question de l'IA
+                  if (_attenteConfirmationIA) {
+                    setState(() => _attenteConfirmationIA = false);
+                  }
+                },
+                onPanUpdate: (details) {
+                  // Sécurité : on ignore le déplacement si plusieurs doigts sont détectés
+                  if (_activePointers > 1) return;
                   
-                  _pointsCibles![idx]['x'] = (_pointsCibles![idx]['x']! + dx1024).clamp(0.0, 1024.0);
-                  _pointsCibles![idx]['y'] = (_pointsCibles![idx]['y']! + dy1024).clamp(0.0, 1024.0);
-                });
-              },
-              child: Container(
-                width: 30, // Zone tactile invisible assez grande
-                height: 30, 
-                color: Colors.transparent, 
-                alignment: Alignment.center,
-                child: Container(
-                  width: 8, // Le rond visuel devient très fin (Avant: 12)
-                  height: 8, 
-                  decoration: BoxDecoration(
-                    color: theme.colorScheme.primary.withValues(alpha: 0.5),
-                    shape: BoxShape.circle,
-                    border: Border.all(color: theme.colorScheme.primary, width: 1.0), // Bordure fine
-                  ),
-                ),
+                  setState(() {
+                    double dxOrig = details.delta.dx / scale;
+                    double dyOrig = details.delta.dy / scale;
+                    double dx1024 = dxOrig * (1024.0 / _imageWidth!);
+                    double dy1024 = dyOrig * (1024.0 / _imageHeight!);
+                    
+                    bool canMove = true;
+                    for (var p in _pointsCibles!) {
+                      double newX = p['x']! + dx1024;
+                      double newY = p['y']! + dy1024;
+                      if (newX < 0 || newX > 1024 || newY < 0 || newY > 1024) {
+                        canMove = false;
+                        break;
+                      }
+                    }
+                    
+                    if (canMove) {
+                      for (int i = 0; i < 4; i++) {
+                        _pointsCibles![i]['x'] = _pointsCibles![i]['x']! + dx1024;
+                        _pointsCibles![i]['y'] = _pointsCibles![i]['y']! + dy1024;
+                      }
+                    }
+                  });
+                },
+                child: Container(color: Colors.transparent),
               ),
             ),
-          );
-        }),
-      ],
+
+            ...screenPoints.asMap().entries.map((entry) {
+              int idx = entry.key;
+              Offset pt = entry.value;
+              
+              // On garde la taille physique constante à l'écran, peu importe le zoom !
+              double hitBoxSize = 48.0 * invZoom; // Zone tactile généreuse mais invisible (Avant: 40)
+              double visualNodeSize = 16.0 * invZoom; // GROS ROND BLEU BIEN VISIBLE (Avant: 6.0)
+              double offsetCenter = hitBoxSize / 2.0;
+
+              return Positioned(
+                left: pt.dx - offsetCenter, 
+                top: pt.dy - offsetCenter,  
+                child: GestureDetector(
+                  behavior: HitTestBehavior.opaque, 
+                  onPanStart: (_) {
+                    // Si l'utilisateur attrape un point, on cache la question de l'IA
+                    if (_attenteConfirmationIA) {
+                      setState(() => _attenteConfirmationIA = false);
+                    }
+                  },
+                  onPanUpdate: (details) {
+                    // Sécurité multi-touch
+                    if (_activePointers > 1) return;
+                    
+                    setState(() {
+                      double dxOrig = details.delta.dx / scale;
+                      double dyOrig = details.delta.dy / scale;
+                      double dx1024 = dxOrig * (1024.0 / _imageWidth!);
+                      double dy1024 = dyOrig * (1024.0 / _imageHeight!);
+                      
+                      _pointsCibles![idx]['x'] = (_pointsCibles![idx]['x']! + dx1024).clamp(0.0, 1024.0);
+                      _pointsCibles![idx]['y'] = (_pointsCibles![idx]['y']! + dy1024).clamp(0.0, 1024.0);
+                    });
+                  },
+                  child: Container(
+                    width: hitBoxSize, // Zone tactile invisible plus grande
+                    height: hitBoxSize, 
+                    color: Colors.transparent, 
+                    alignment: Alignment.center,
+                    child: Container(
+                      width: visualNodeSize, // Le rond est plus gros 
+                      height: visualNodeSize, 
+                      decoration: BoxDecoration(
+                        color: Colors.blueAccent.withValues(alpha: 0.6), // FORCE LE BLEU
+                        shape: BoxShape.circle,
+                        // Bordure un peu plus épaisse pour un meilleur rendu visuel
+                        border: Border.all(color: Colors.blueAccent, width: 2.0 * invZoom), // FORCE LE BLEU
+                      ),
+                    ),
+                  ),
+                ),
+              );
+            }),
+          ],
+        );
+      }
     );
   }
 
@@ -908,23 +940,6 @@ class _EcranResultatState extends State<EcranResultat> {
             }
           ),
 
-        // =========================================================================
-        // === CORRECTION : AFFICHE L'ÉQUIPEMENT RENDU LORS DU DRAG DE LA GOULOTTE =
-        // =========================================================================
-        if (_calqueEquipementPngBytes != null)
-          ValueListenableBuilder<bool>(
-            valueListenable: _isDraggingGoulotteNotifier,
-            builder: (context, isDraggingGoulotte, _) {
-              if (isDraggingGoulotte) {
-                // Quand on déplace la goulotte, on montre le calque PNG parfait de la clim sur le mur
-                return Positioned.fill(
-                  child: Image.memory(_calqueEquipementPngBytes!, fit: BoxFit.contain, gaplessPlayback: true),
-                );
-              }
-              return const SizedBox.shrink();
-            }
-          ),
-
         // Le painter global de la goulotte
         Positioned.fill(
           child: IgnorePointer(
@@ -1034,63 +1049,82 @@ class _EcranResultatState extends State<EcranResultat> {
                   double equipementScreenX = (ptHgXOrig + decalage.dx) * scale + offsetX;
                   double equipementScreenY = (ptHgYOrig + decalage.dy) * scale + offsetY;
                   
-                  return Positioned(
-                    key: const ValueKey('equipement_draggable'),
-                    left: equipementScreenX,
-                    top: equipementScreenY,
-                    width: equipementScreenW,
-                    height: equipementScreenH,
-                    child: IgnorePointer(
-                      // Désactive le drag de l'équipement si on est en mode dessin de goulotte
-                      ignoring: _isDrawGoulotteMode,
-                      child: GestureDetector(
-                        behavior: HitTestBehavior.translucent,
-                        onPanStart: (_) {
-                          if (_activePointers > 1) return;
-                          _isDraggingEquipementNotifier.value = true;
-                        },
-                        onPanUpdate: (details) { 
-                           if (_activePointers > 1 || !_isDraggingEquipementNotifier.value) return;
-                           
-                           double cosA = math.cos(angleRad);
-                           double sinA = math.sin(angleRad);
-                           double globalDx = details.delta.dx * cosA - details.delta.dy * sinA;
-                           double globalDy = details.delta.dx * sinA + details.delta.dy * cosA;
+                  Offset lastSavedDecalage = _historiqueDecalages.isNotEmpty ? _historiqueDecalages.last : Offset.zero;
+                  double diffX = (decalage.dx - lastSavedDecalage.dx) * scale;
+                  double diffY = (decalage.dy - lastSavedDecalage.dy) * scale;
 
-                           _decalageNotifier.value = Offset(
-                             _decalageNotifier.value.dx + globalDx / scale,
-                             _decalageNotifier.value.dy + globalDy / scale
-                           );
-                        },
-                        onPanEnd: (_) { 
-                           if (!_isDraggingEquipementNotifier.value) return;
-                           _isDraggingEquipementNotifier.value = false;
+                  return Stack(
+                    children: [
+                      // NOUVEAU : Rendu complet 3D en mouvement au lieu du PNG plat !
+                      if (isDraggingEquipement && _calqueEquipementPngBytes != null)
+                        Positioned.fill(
+                          child: IgnorePointer(
+                            child: Transform.translate(
+                              offset: Offset(diffX, diffY),
+                              child: Opacity(
+                                opacity: 0.85, // Légèrement transparent pour voir où on le pose
+                                child: Image.memory(_calqueEquipementPngBytes!, fit: BoxFit.contain, gaplessPlayback: true),
+                              ),
+                            ),
+                          ),
+                        ),
 
-                           // CORRECTION : Enregistrement de la nouvelle coordonnée validée dans la pile d'historique
-                           if (_historiqueDecalages.isEmpty || _historiqueDecalages.last != _decalageNotifier.value) {
-                             _historiqueDecalages.add(_decalageNotifier.value);
-                             _historiqueLengthNotifier.value = _historiqueDecalages.length; // OPTIMISATION : Demande la MAJ du bouton Undo
-                           }
+                      // Zone tactile transparente (Hitbox de déplacement invisible)
+                      Positioned(
+                        key: const ValueKey('equipement_draggable'),
+                        left: equipementScreenX,
+                        top: equipementScreenY,
+                        width: equipementScreenW,
+                        height: equipementScreenH,
+                        child: IgnorePointer(
+                          ignoring: _isDrawGoulotteMode,
+                          child: GestureDetector(
+                            behavior: HitTestBehavior.translucent,
+                            onPanStart: (_) {
+                              if (_activePointers > 1) return;
+                              _isDraggingEquipementNotifier.value = true;
+                            },
+                            onPanUpdate: (details) { 
+                               if (_activePointers > 1 || !_isDraggingEquipementNotifier.value) return;
+                               
+                               double cosA = math.cos(angleRad);
+                               double sinA = math.sin(angleRad);
+                               double globalDx = details.delta.dx * cosA - details.delta.dy * sinA;
+                               double globalDy = details.delta.dx * sinA + details.delta.dy * cosA;
 
-                           // On ne re-calcule que l'Equipement ! C'est ce qui fait gagner du temps.
-                           _genererIncrustation(recomputeGoulotte: false, recomputeEquipement: true); 
-                         },
-                        onPanCancel: () { 
-                           if (!_isDraggingEquipementNotifier.value) return;
-                           _isDraggingEquipementNotifier.value = false;
-                           _genererIncrustation(recomputeGoulotte: false, recomputeEquipement: true); 
-                         },
-                        child: Transform.rotate(
-                          angle: angleRad,
-                          alignment: Alignment.topLeft, 
-                          // CORRECTION : L'équipement brut n'est rendu transparent et visible QUE quand ON le déplace LUI.
-                          child: Opacity(
-                            opacity: isDraggingEquipement ? 0.65 : 0.0, 
-                            child: Image.asset(_modeleSelectionne!.chemin, fit: BoxFit.fill),
+                               _decalageNotifier.value = Offset(
+                                 _decalageNotifier.value.dx + globalDx / scale,
+                                 _decalageNotifier.value.dy + globalDy / scale
+                               );
+                            },
+                            onPanEnd: (_) { 
+                               if (!_isDraggingEquipementNotifier.value) return;
+                               _isDraggingEquipementNotifier.value = false;
+
+                               // CORRECTION : Enregistrement de la nouvelle coordonnée validée dans la pile d'historique
+                               if (_historiqueDecalages.isEmpty || _historiqueDecalages.last != _decalageNotifier.value) {
+                                 _historiqueDecalages.add(_decalageNotifier.value);
+                                 _historiqueLengthNotifier.value = _historiqueDecalages.length; // OPTIMISATION : Demande la MAJ du bouton Undo
+                               }
+
+                               // On ne re-calcule que l'Equipement ! C'est ce qui fait gagner du temps.
+                               _genererIncrustation(recomputeGoulotte: false, recomputeEquipement: true); 
+                             },
+                            onPanCancel: () { 
+                               if (!_isDraggingEquipementNotifier.value) return;
+                               _isDraggingEquipementNotifier.value = false;
+                               _genererIncrustation(recomputeGoulotte: false, recomputeEquipement: true); 
+                             },
+                            child: Transform.rotate(
+                              angle: angleRad,
+                              alignment: Alignment.topLeft, 
+                              // La hitbox suit l'angle de la photo mais reste 100% invisible
+                              child: Container(color: Colors.transparent), 
+                            ),
                           ),
                         ),
                       ),
-                    ),
+                    ]
                   );
                 }
               );

@@ -33,7 +33,7 @@ class MonApplication extends StatelessWidget {
       debugShowCheckedModeBanner: false,
       theme: AppTheme.lightTheme,
       darkTheme: AppTheme.darkTheme,
-      themeMode: ThemeMode.dark, // S'adapte automatiquement au réglage du téléphone
+      themeMode: ThemeMode.system, // S'adapte automatiquement au réglage du téléphone
       
       // Passe la liste des caméras à l'écran d'accueil pour initialiser l'appareil photo.
       home: EcranAccueil(cameras: cameras), 

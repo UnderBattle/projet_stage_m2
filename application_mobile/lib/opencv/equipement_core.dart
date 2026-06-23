@@ -64,7 +64,7 @@ class EquipementCore {
       bool estEquipementNoir = lumaNativeEquipement < 80.0;
 
       // =========================================================================
-      // === PHASE 2 : CALCUL DE LA PERSPECTIVE STABILISEE ===
+      // === PHASE 2 : CALCUL DE LA PERSPECTIVE STABILISEE ET ZOOM OPTIQUE ===
       // =========================================================================
       cv.Point ptHg = ptsOri[0];
       cv.Point ptHd = ptsOri[1];
@@ -76,18 +76,46 @@ class EquipementCore {
       double hAutoMm = 100.0;
       double wAutoMm = 50.0; 
       double ratioPhysique = hAutoMm / wAutoMm; 
-      double hauteurPx = largeurPx * ratioPhysique;
+      double hauteurPxBase = largeurPx * ratioPhysique;
 
-      double ux = largeurPx * math.cos(angleRad);
-      double uy = largeurPx * math.sin(angleRad);
-      double vx = -hauteurPx * math.sin(angleRad);
-      double vy = hauteurPx * math.cos(angleRad);
+      // Calcul des vecteurs pour trouver le centre exact de l'autocollant
+      double uxBase = largeurPx * math.cos(angleRad);
+      double uyBase = largeurPx * math.sin(angleRad);
+      double vxBase = -hauteurPxBase * math.sin(angleRad);
+      double vyBase = hauteurPxBase * math.cos(angleRad);
+
+      double centreX = ptHg.x + (uxBase + vxBase) / 2.0;
+      double centreY = ptHg.y + (uyBase + vyBase) / 2.0;
+
+      // NOUVEAU : Effet d'avancée optique (Zoom depuis le centre)
+      // Pour ressentir les 240mm de profondeur, la façade de la clim doit être optiquement plus grande 
+      // car elle est physiquement plus proche de l'objectif de la caméra que le mur au fond !
+      double effetZoomProfondeur = 1.0 + (profondeurMm / 1000.0) * 0.60; // AJUSTÉ : 0.65 au lieu de 0.45 pour agrandir un peu plus la clim
+
+      double largeurPxZoom = largeurPx * effetZoomProfondeur;
+      double hauteurPxZoom = hauteurPxBase * effetZoomProfondeur;
+
+      double uxZoom = largeurPxZoom * math.cos(angleRad);
+      double uyZoom = largeurPxZoom * math.sin(angleRad);
+      double vxZoom = -hauteurPxZoom * math.sin(angleRad);
+      double vyZoom = hauteurPxZoom * math.cos(angleRad);
+
+      // CORRECTION DU DÉCALAGE : Décalage correctif vers la gauche (suivant la perspective du mur)
+      // L'équipement est physiquement décalé par rapport à l'autocollant.
+      // On utilise uxBase et uyBase (qui pointent vers la droite) en négatif pour aller à gauche !
+      double ratioDecalageGauche = 0.50; // Ajustable : décale de 50% de la largeur de l'autocollant
+      double compensationMurX = -(uxBase * ratioDecalageGauche);
+      double compensationMurY = -(uyBase * ratioDecalageGauche);
+
+      // Nouveau point Haut-Gauche calculé depuis le centre, avec le décalage correctif inclus
+      double nouveauPtHgX = centreX - (uxZoom + vxZoom) / 2.0 + compensationMurX;
+      double nouveauPtHgY = centreY - (uyZoom + vyZoom) / 2.0 + compensationMurY;
 
       List<cv.Point> ptsDstLisses = [
-        cv.Point((ptHg.x + decalageX).toInt(), (ptHg.y + decalageY).toInt()),
-        cv.Point((ptHg.x + ux + decalageX).toInt(), (ptHg.y + uy + decalageY).toInt()),
-        cv.Point((ptHg.x + ux + vx + decalageX).toInt(), (ptHg.y + uy + vy + decalageY).toInt()),
-        cv.Point((ptHg.x + vx + decalageX).toInt(), (ptHg.y + vy + decalageY).toInt())
+        cv.Point((nouveauPtHgX + decalageX).toInt(), (nouveauPtHgY + decalageY).toInt()),
+        cv.Point((nouveauPtHgX + uxZoom + decalageX).toInt(), (nouveauPtHgY + uyZoom + decalageY).toInt()),
+        cv.Point((nouveauPtHgX + uxZoom + vxZoom + decalageX).toInt(), (nouveauPtHgY + uyZoom + vyZoom + decalageY).toInt()),
+        cv.Point((nouveauPtHgX + vxZoom + decalageX).toInt(), (nouveauPtHgY + vyZoom + decalageY).toInt())
       ];
 
       List<cv.Point> ptsDstLissesPad = ptsDstLisses.map((p) => cv.Point(p.x + pad, p.y + pad)).toList();
@@ -143,8 +171,9 @@ class EquipementCore {
       double ratioForme = hauteurMm / largeurMm;
       bool estClimMurale = ratioForme < 0.45;
 
-      double forcePerspectiveBasse = estClimMurale ? 0.02 : 0.25; 
-      double forcePerspectiveLaterale = estClimMurale ? 0.01 : 0.05; 
+      // AMÉLIORATION PERSPECTIVE : Force accrue pour un effet 3D plus prononcé (Bords qui fuient mieux)
+      double forcePerspectiveBasse = estClimMurale ? 0.08 : 0.25;  // Avant: 0.02
+      double forcePerspectiveLaterale = estClimMurale ? 0.04 : 0.05; // Avant: 0.01
 
       double dynamicShiftX = (wMur * forcePerspectiveLaterale) * attenuationX;
       double dynamicShiftY = (hMur * forcePerspectiveBasse) * attenuationY;
@@ -152,8 +181,9 @@ class EquipementCore {
       double imgCXPad = centrePhotoX + dynamicShiftX; 
       double imgCYPad = centrePhotoY + dynamicShiftY; 
       
+      // AMÉLIORATION EXTRUSION : On épaissit drastiquement le bloc de la clim murale
       double baseExtrusion = estClimMurale 
-          ? (profondeurMm / 1000.0) * 0.06  
+          ? (profondeurMm / 1000.0) * 0.18  // Avant: 0.06 (Maintenant x3 plus épaisse)
           : (profondeurMm / 1000.0) * 0.25; 
 
       cv.Mat sidesBgrPad = cv.Mat.zeros(hPad, wPad, cv.MatType.CV_8UC3);
@@ -164,10 +194,11 @@ class EquipementCore {
       double mG = baseColorEq.val[1];
       double mR = baseColorEq.val[2];
       
+      // AMÉLIORATION RELIEF : Assombrissement asymétrique des faces latérales
       cv.Scalar colorTop = cv.Scalar(mB, mG, mR, 0);
-      cv.Scalar colorBottom = cv.Scalar(mB * 0.60, mG * 0.60, mR * 0.60, 0); 
-      cv.Scalar colorLeft = cv.Scalar(mB * 0.90, mG * 0.89, mR * 0.89, 0);
-      cv.Scalar colorRight = cv.Scalar(mB * 0.89, mG * 0.89, mR * 0.89, 0);
+      cv.Scalar colorBottom = cv.Scalar(mB * 0.45, mG * 0.45, mR * 0.45, 0); // Plus sombre pour ancrer l'objet (Avant: 0.60)
+      cv.Scalar colorLeft = cv.Scalar(mB * 0.85, mG * 0.85, mR * 0.85, 0);   // Avant: 0.90
+      cv.Scalar colorRight = cv.Scalar(mB * 0.75, mG * 0.75, mR * 0.75, 0);  // Asymétrie lumineuse droite/gauche (Avant: 0.89)
 
       double scaleS = 1.0 - baseExtrusion;
       double tx = imgCXPad * baseExtrusion;
