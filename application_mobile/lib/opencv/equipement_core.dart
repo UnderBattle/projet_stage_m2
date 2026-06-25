@@ -88,9 +88,7 @@ class EquipementCore {
       double centreY = ptHg.y + (uyBase + vyBase) / 2.0;
 
       // NOUVEAU : Effet d'avancée optique (Zoom depuis le centre)
-      // Pour ressentir les 240mm de profondeur, la façade de la clim doit être optiquement plus grande 
-      // car elle est physiquement plus proche de l'objectif de la caméra que le mur au fond !
-      double effetZoomProfondeur = 1.0 + (profondeurMm / 1000.0) * 0.60; // AJUSTÉ : 0.65 au lieu de 0.45 pour agrandir un peu plus la clim
+      double effetZoomProfondeur = 1.0 + (profondeurMm / 1000.0) * 0.60; 
 
       double largeurPxZoom = largeurPx * effetZoomProfondeur;
       double hauteurPxZoom = hauteurPxBase * effetZoomProfondeur;
@@ -100,10 +98,8 @@ class EquipementCore {
       double vxZoom = -hauteurPxZoom * math.sin(angleRad);
       double vyZoom = hauteurPxZoom * math.cos(angleRad);
 
-      // CORRECTION DU DÉCALAGE : Décalage correctif vers la gauche (suivant la perspective du mur)
-      // L'équipement est physiquement décalé par rapport à l'autocollant.
-      // On utilise uxBase et uyBase (qui pointent vers la droite) en négatif pour aller à gauche !
-      double ratioDecalageGauche = 0.50; // Ajustable : décale de 50% de la largeur de l'autocollant
+      // CORRECTION DU DÉCALAGE : Décalage correctif vers la gauche
+      double ratioDecalageGauche = 0.50;
       double compensationMurX = -(uxBase * ratioDecalageGauche);
       double compensationMurY = -(uyBase * ratioDecalageGauche);
 
@@ -171,19 +167,17 @@ class EquipementCore {
       double ratioForme = hauteurMm / largeurMm;
       bool estClimMurale = ratioForme < 0.45;
 
-      // AMÉLIORATION PERSPECTIVE : Force accrue pour un effet 3D plus prononcé (Bords qui fuient mieux)
-      double forcePerspectiveBasse = estClimMurale ? 0.08 : 0.25;  // Avant: 0.02
-      double forcePerspectiveLaterale = estClimMurale ? 0.04 : 0.05; // Avant: 0.01
+      double forcePerspectiveBasse = estClimMurale ? 0.08 : 0.25; 
+      double forcePerspectiveLaterale = estClimMurale ? 0.04 : 0.05; 
 
       double dynamicShiftX = (wMur * forcePerspectiveLaterale) * attenuationX;
       double dynamicShiftY = (hMur * forcePerspectiveBasse) * attenuationY;
 
-      double imgCXPad = centrePhotoX + dynamicShiftX; 
-      double imgCYPad = centrePhotoY + dynamicShiftY; 
+      double imgCXPad = centrePhotoX + dynamicShiftX;
+      double imgCYPad = centrePhotoY + dynamicShiftY;
       
-      // AMÉLIORATION EXTRUSION : On épaissit drastiquement le bloc de la clim murale
       double baseExtrusion = estClimMurale 
-          ? (profondeurMm / 1000.0) * 0.18  // Avant: 0.06 (Maintenant x3 plus épaisse)
+          ? (profondeurMm / 1000.0) * 0.18  
           : (profondeurMm / 1000.0) * 0.25; 
 
       cv.Mat sidesBgrPad = cv.Mat.zeros(hPad, wPad, cv.MatType.CV_8UC3);
@@ -196,9 +190,17 @@ class EquipementCore {
       
       // AMÉLIORATION RELIEF : Assombrissement asymétrique des faces latérales
       cv.Scalar colorTop = cv.Scalar(mB, mG, mR, 0);
-      cv.Scalar colorBottom = cv.Scalar(mB * 0.45, mG * 0.45, mR * 0.45, 0); // Plus sombre pour ancrer l'objet (Avant: 0.60)
-      cv.Scalar colorLeft = cv.Scalar(mB * 0.85, mG * 0.85, mR * 0.85, 0);   // Avant: 0.90
-      cv.Scalar colorRight = cv.Scalar(mB * 0.75, mG * 0.75, mR * 0.75, 0);  // Asymétrie lumineuse droite/gauche (Avant: 0.89)
+      cv.Scalar colorBottom = estEquipementNoir 
+          ? cv.Scalar(math.min(255.0, mB + 50), math.min(255.0, mG + 50), math.min(255.0, mR + 50), 0) 
+          : cv.Scalar(mB * 0.65, mG * 0.65, mR * 0.65, 0); 
+          
+      cv.Scalar colorLeft = estEquipementNoir 
+          ? cv.Scalar(math.min(255.0, mB + 35), math.min(255.0, mG + 35), math.min(255.0, mR + 35), 0)
+          : cv.Scalar(mB * 0.85, mG * 0.85, mR * 0.85, 0);   
+          
+      cv.Scalar colorRight = estEquipementNoir 
+          ? cv.Scalar(math.min(255.0, mB + 20), math.min(255.0, mG + 20), math.min(255.0, mR + 20), 0)
+          : cv.Scalar(mB * 0.75, mG * 0.75, mR * 0.75, 0);
 
       double scaleS = 1.0 - baseExtrusion;
       double tx = imgCXPad * baseExtrusion;
@@ -314,7 +316,7 @@ class EquipementCore {
       double ratioContraste = (ecartTypeMur / 50.0).clamp(0.2, 1.2);
 
       final double reglageOmbreDirBase = 0.12 * ratioContraste;
-      final double reglageOmbreContact = 0.25 * ratioContraste;
+      final double reglageOmbreContact = estEquipementNoir ? 0.05 * ratioContraste : 0.25 * ratioContraste;
 
       cv.Mat grayMurFlou = cv.gaussianBlur(grayMurSmall, (7, 7), 0.0);
       cv.Mat sobelX = cv.sobel(grayMurFlou, cv.MatType.CV_32F, 1, 0, ksize: 3);
@@ -395,7 +397,7 @@ class EquipementCore {
 
       double ratioLuminositeAmbiante = (lumMurLocal / 128.0).clamp(0.7, 1.0);
       final double reglageLuminositeEquipementBlanc = 0.95 * ratioLuminositeAmbiante; 
-      final double reglageLuminositeEquipementNoir = 0.78;   
+      final double reglageLuminositeEquipementNoir = 0.78;
 
       double tintB = bMur / lumMurLocal;
       double tintG = gMur / lumMurLocal;

@@ -113,27 +113,7 @@ class BoundingBoxPainter extends CustomPainter {
       
     canvas.drawPath(path, paint);
 
-    // Dessine de très légers crochets dans les angles pour un aspect viseur d'appareil photo
-    double cornerLength = 12.0 / zoomScale; // S'adapte au zoom
-    final cornerPaint = Paint()
-      ..color = primaryColor
-      ..strokeWidth = 4.0 / zoomScale // ÉPAISSI : 4.0 au lieu de 2.0
-      ..style = PaintingStyle.stroke;
-    
-    for (int i = 0; i < 4; i++) {
-      Offset p = points[i];
-      Offset pNext = points[(i + 1) % 4];
-      Offset pPrev = points[(i + 3) % 4];
-      
-      Offset dNext = (pNext - p) / (pNext - p).distance;
-      Offset dPrev = (pPrev - p) / (pPrev - p).distance;
-      
-      Path cornerPath = Path()
-        ..moveTo(p.dx + dPrev.dx * cornerLength, p.dy + dPrev.dy * cornerLength)
-        ..lineTo(p.dx, p.dy)
-        ..lineTo(p.dx + dNext.dx * cornerLength, p.dy + dNext.dy * cornerLength);
-      canvas.drawPath(cornerPath, cornerPaint);
-    }
+    // CORRECTION : Retrait des crochets dans les angles pour un look "Paint" pur et classique !
 
     final fillPaint = Paint()
       ..color = primaryColor.withValues(alpha: 0.15)

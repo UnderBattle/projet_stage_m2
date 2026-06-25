@@ -48,6 +48,10 @@ class _EcranResultatState extends State<EcranResultat> {
   Uint8List? _imageFondAvecGoulotteBytes; 
   Uint8List? _calqueEquipementPngBytes; // Le calque de l'équipement transparent (PNG)
   
+  // NOUVEAU: Mémorise le dernier rendu complet (non rogné) pour le drag hors de l'écran
+  Uint8List? _dernierCalqueEquipementCompletBytes;
+  Offset _decalageDuCalqueComplet = Offset.zero;
+
   int? _imageWidth;
   int? _imageHeight;
   List<Map<String, double>>? _pointsCibles;
@@ -374,6 +378,7 @@ class _EcranResultatState extends State<EcranResultat> {
       });
       _imageFondAvecGoulotteBytes = null; // On nettoie les caches car la base a changé
       _calqueEquipementPngBytes = null;
+      _dernierCalqueEquipementCompletBytes = null; // On nettoie aussi le cache du drag
     } catch (e) {
       print("Erreur inpainting manuel : $e");
       if (mounted) {
@@ -448,6 +453,26 @@ class _EcranResultatState extends State<EcranResultat> {
           'hauteurMm': hauteur,
           'largeurMm': largeur,
         });
+
+        // --- NOUVEAU : SAUVEGARDE DU DERNIER RENDU COMPLET (NON ROGNÉ) ---
+        // On calcule la taille et la position de la clim pour vérifier si elle sort de l'écran
+        double equipementWPxOrig = (largeur / 50.0) * autoWPxOrig;
+        double equipementHPxOrig = equipementWPxOrig * (hauteur / largeur);
+        
+        double eqX = ptHgXOrig + _decalageNotifier.value.dx;
+        double eqY = ptHgYOrig + _decalageNotifier.value.dy;
+        
+        // On utilise une marge de 50 pixels pour être sûr que l'ombre et l'extrusion soient entièrement sur la photo
+        bool isCropped = (eqX < 50 || eqY < 50 || 
+                         (eqX + equipementWPxOrig + 100) > _imageWidth! || 
+                         (eqY + equipementHPxOrig + 100) > _imageHeight!);
+
+        // Si la machine n'est PAS rognée, on la sauvegarde en tant qu'image "parfaite" pour le glissement !
+        // Si elle l'est, on garde notre ancienne image parfaite en mémoire pour éviter le trou visuel.
+        if (!isCropped || _dernierCalqueEquipementCompletBytes == null) {
+           _dernierCalqueEquipementCompletBytes = _calqueEquipementPngBytes;
+           _decalageDuCalqueComplet = _decalageNotifier.value;
+        }
       }
 
       // 3. FUSION INSTANTANÉE DES DEUX CALQUES
@@ -498,6 +523,21 @@ class _EcranResultatState extends State<EcranResultat> {
         _genererIncrustation(recomputeGoulotte: false, recomputeEquipement: true);
       }
     }
+  }
+
+  // NOUVEAU : Méthode pour tout remettre à zéro (Position initiale calculée par l'IA)
+  void _resetPositionEquipement() {
+    if (_isProcessing) return;
+
+    setState(() {
+      _decalageNotifier.value = Offset.zero;
+      _historiqueDecalages.clear();
+      _historiqueDecalages.add(Offset.zero);
+      _historiqueLengthNotifier.value = 1; // Cache les boutons undo/reset
+    });
+
+    // On recalcule le PNG à la position zéro
+    _genererIncrustation(recomputeGoulotte: false, recomputeEquipement: true);
   }
 
   Future<void> _sauvegarderImage() async {
@@ -577,6 +617,7 @@ class _EcranResultatState extends State<EcranResultat> {
               )
             ),
             
+            // DÉPLACEMENT CENTRAL DU RECTANGLE (Garde toujours sa forme 90°)
             Positioned(
               left: minX,
               top: minY,
@@ -587,7 +628,22 @@ class _EcranResultatState extends State<EcranResultat> {
                 onPanStart: (_) {
                   // Si l'utilisateur commence à bouger la boîte, on cache la question de l'IA
                   if (_attenteConfirmationIA) {
-                    setState(() => _attenteConfirmationIA = false);
+                    setState(() {
+                      _attenteConfirmationIA = false;
+                      
+                      // ALIGNEMENT STRICT : On convertit la forme de l'IA en VRAI RECTANGLE
+                      double minX = _pointsCibles!.map((p) => p['x']!).reduce(math.min);
+                      double maxX = _pointsCibles!.map((p) => p['x']!).reduce(math.max);
+                      double minY = _pointsCibles!.map((p) => p['y']!).reduce(math.min);
+                      double maxY = _pointsCibles!.map((p) => p['y']!).reduce(math.max);
+                      
+                      _pointsCibles = [
+                        {'x': minX, 'y': minY}, // Haut Gauche
+                        {'x': maxX, 'y': minY}, // Haut Droit
+                        {'x': maxX, 'y': maxY}, // Bas Droit
+                        {'x': minX, 'y': maxY}, // Bas Gauche
+                      ];
+                    });
                   }
                 },
                 onPanUpdate: (details) {
@@ -628,7 +684,7 @@ class _EcranResultatState extends State<EcranResultat> {
               
               // On garde la taille physique constante à l'écran, peu importe le zoom !
               double hitBoxSize = 48.0 * invZoom; // Zone tactile généreuse mais invisible (Avant: 40)
-              double visualNodeSize = 16.0 * invZoom; // GROS ROND BLEU BIEN VISIBLE (Avant: 6.0)
+              double visualNodeSize = 16.0 * invZoom; // GROS NOEUD BLEU BIEN VISIBLE (Avant: 6.0)
               double offsetCenter = hitBoxSize / 2.0;
 
               return Positioned(
@@ -639,7 +695,22 @@ class _EcranResultatState extends State<EcranResultat> {
                   onPanStart: (_) {
                     // Si l'utilisateur attrape un point, on cache la question de l'IA
                     if (_attenteConfirmationIA) {
-                      setState(() => _attenteConfirmationIA = false);
+                      setState(() {
+                        _attenteConfirmationIA = false;
+                        
+                        // ALIGNEMENT STRICT : Dès qu'on touche un coin, ça devient un rectangle parfait
+                        double minX = _pointsCibles!.map((p) => p['x']!).reduce(math.min);
+                        double maxX = _pointsCibles!.map((p) => p['x']!).reduce(math.max);
+                        double minY = _pointsCibles!.map((p) => p['y']!).reduce(math.min);
+                        double maxY = _pointsCibles!.map((p) => p['y']!).reduce(math.max);
+                        
+                        _pointsCibles = [
+                          {'x': minX, 'y': minY}, // Haut Gauche
+                          {'x': maxX, 'y': minY}, // Haut Droit
+                          {'x': maxX, 'y': maxY}, // Bas Droit
+                          {'x': minX, 'y': maxY}, // Bas Gauche
+                        ];
+                      });
                     }
                   },
                   onPanUpdate: (details) {
@@ -652,8 +723,40 @@ class _EcranResultatState extends State<EcranResultat> {
                       double dx1024 = dxOrig * (1024.0 / _imageWidth!);
                       double dy1024 = dyOrig * (1024.0 / _imageHeight!);
                       
-                      _pointsCibles![idx]['x'] = (_pointsCibles![idx]['x']! + dx1024).clamp(0.0, 1024.0);
-                      _pointsCibles![idx]['y'] = (_pointsCibles![idx]['y']! + dy1024).clamp(0.0, 1024.0);
+                      double newX = (_pointsCibles![idx]['x']! + dx1024).clamp(0.0, 1024.0);
+                      double newY = (_pointsCibles![idx]['y']! + dy1024).clamp(0.0, 1024.0);
+
+                      // CORRECTION MAJEURE : COMPORTEMENT "RECTANGLE CLASSIQUE PAINT"
+                      // Tirer un coin modifie automatiquement ses voisins pour garder les angles à 90° !
+                      if (idx == 0) { // Haut-Gauche
+                        if (newX >= _pointsCibles![1]['x']! - 10) newX = _pointsCibles![1]['x']! - 10;
+                        if (newY >= _pointsCibles![3]['y']! - 10) newY = _pointsCibles![3]['y']! - 10;
+                        _pointsCibles![0]['x'] = newX;
+                        _pointsCibles![0]['y'] = newY;
+                        _pointsCibles![1]['y'] = newY; // Aligne Haut-Droit
+                        _pointsCibles![3]['x'] = newX; // Aligne Bas-Gauche
+                      } else if (idx == 1) { // Haut-Droit
+                        if (newX <= _pointsCibles![0]['x']! + 10) newX = _pointsCibles![0]['x']! + 10;
+                        if (newY >= _pointsCibles![2]['y']! - 10) newY = _pointsCibles![2]['y']! - 10;
+                        _pointsCibles![1]['x'] = newX;
+                        _pointsCibles![1]['y'] = newY;
+                        _pointsCibles![0]['y'] = newY; // Aligne Haut-Gauche
+                        _pointsCibles![2]['x'] = newX; // Aligne Bas-Droit
+                      } else if (idx == 2) { // Bas-Droit
+                        if (newX <= _pointsCibles![3]['x']! + 10) newX = _pointsCibles![3]['x']! + 10;
+                        if (newY <= _pointsCibles![1]['y']! + 10) newY = _pointsCibles![1]['y']! + 10;
+                        _pointsCibles![2]['x'] = newX;
+                        _pointsCibles![2]['y'] = newY;
+                        _pointsCibles![3]['y'] = newY; // Aligne Bas-Gauche
+                        _pointsCibles![1]['x'] = newX; // Aligne Haut-Droit
+                      } else if (idx == 3) { // Bas-Gauche
+                        if (newX >= _pointsCibles![2]['x']! - 10) newX = _pointsCibles![2]['x']! - 10;
+                        if (newY <= _pointsCibles![0]['y']! + 10) newY = _pointsCibles![0]['y']! + 10;
+                        _pointsCibles![3]['x'] = newX;
+                        _pointsCibles![3]['y'] = newY;
+                        _pointsCibles![2]['y'] = newY; // Aligne Bas-Droit
+                        _pointsCibles![0]['x'] = newX; // Aligne Haut-Gauche
+                      }
                     });
                   },
                   child: Container(
@@ -662,13 +765,12 @@ class _EcranResultatState extends State<EcranResultat> {
                     color: Colors.transparent, 
                     alignment: Alignment.center,
                     child: Container(
-                      width: visualNodeSize, // Le rond est plus gros 
+                      width: visualNodeSize, // Le carré est plus gros 
                       height: visualNodeSize, 
                       decoration: BoxDecoration(
                         color: Colors.blueAccent.withValues(alpha: 0.6), // FORCE LE BLEU
-                        shape: BoxShape.circle,
-                        // Bordure un peu plus épaisse pour un meilleur rendu visuel
-                        border: Border.all(color: Colors.blueAccent, width: 2.0 * invZoom), // FORCE LE BLEU
+                        shape: BoxShape.rectangle, // CORRECTION : LOOK CARRE CLASSIQUE DE PAINT !
+                        border: Border.all(color: Colors.blueAccent, width: 2.0 * invZoom), 
                       ),
                     ),
                   ),
@@ -940,6 +1042,23 @@ class _EcranResultatState extends State<EcranResultat> {
             }
           ),
 
+        // =========================================================================
+        // === CORRECTION : AFFICHE L'ÉQUIPEMENT RENDU LORS DU DRAG DE LA GOULOTTE =
+        // =========================================================================
+        if (_calqueEquipementPngBytes != null)
+          ValueListenableBuilder<bool>(
+            valueListenable: _isDraggingGoulotteNotifier,
+            builder: (context, isDraggingGoulotte, _) {
+              if (isDraggingGoulotte) {
+                // Quand on déplace la goulotte, on montre le calque PNG parfait de la clim sur le mur
+                return Positioned.fill(
+                  child: Image.memory(_calqueEquipementPngBytes!, fit: BoxFit.contain, gaplessPlayback: true),
+                );
+              }
+              return const SizedBox.shrink();
+            }
+          ),
+
         // Le painter global de la goulotte
         Positioned.fill(
           child: IgnorePointer(
@@ -1049,21 +1168,26 @@ class _EcranResultatState extends State<EcranResultat> {
                   double equipementScreenX = (ptHgXOrig + decalage.dx) * scale + offsetX;
                   double equipementScreenY = (ptHgYOrig + decalage.dy) * scale + offsetY;
                   
-                  Offset lastSavedDecalage = _historiqueDecalages.isNotEmpty ? _historiqueDecalages.last : Offset.zero;
-                  double diffX = (decalage.dx - lastSavedDecalage.dx) * scale;
-                  double diffY = (decalage.dy - lastSavedDecalage.dy) * scale;
+                  // OPTIMISATION DRAG : On calcule le vecteur de translation par rapport au dernier rendu complet !
+                  Uint8List? dragImage = _dernierCalqueEquipementCompletBytes ?? _calqueEquipementPngBytes;
+                  Offset refDecalage = _dernierCalqueEquipementCompletBytes != null 
+                      ? _decalageDuCalqueComplet 
+                      : (_historiqueDecalages.isNotEmpty ? _historiqueDecalages.last : Offset.zero);
+                      
+                  double diffX = (decalage.dx - refDecalage.dx) * scale;
+                  double diffY = (decalage.dy - refDecalage.dy) * scale;
 
                   return Stack(
                     children: [
                       // NOUVEAU : Rendu complet 3D en mouvement au lieu du PNG plat !
-                      if (isDraggingEquipement && _calqueEquipementPngBytes != null)
+                      if (isDraggingEquipement && dragImage != null)
                         Positioned.fill(
                           child: IgnorePointer(
                             child: Transform.translate(
                               offset: Offset(diffX, diffY),
                               child: Opacity(
                                 opacity: 0.85, // Légèrement transparent pour voir où on le pose
-                                child: Image.memory(_calqueEquipementPngBytes!, fit: BoxFit.contain, gaplessPlayback: true),
+                                child: Image.memory(dragImage, fit: BoxFit.contain, gaplessPlayback: true),
                               ),
                             ),
                           ),
@@ -1118,8 +1242,12 @@ class _EcranResultatState extends State<EcranResultat> {
                             child: Transform.rotate(
                               angle: angleRad,
                               alignment: Alignment.topLeft, 
-                              // La hitbox suit l'angle de la photo mais reste 100% invisible
-                              child: Container(color: Colors.transparent), 
+                              // CORRECTION : Le PNG brut plat est maintenant à 0.0 en permanence.
+                              // Il sert juste de "boîte de collision" pour les gestes tactiles !
+                              child: Opacity(
+                                opacity: 0.0, 
+                                child: Image.asset(_modeleSelectionne!.chemin, fit: BoxFit.fill),
+                              ),
                             ),
                           ),
                         ),
@@ -1320,7 +1448,7 @@ class _EcranResultatState extends State<EcranResultat> {
                               panEnabled: isPanZoomEnabled,
                               scaleEnabled: isPanZoomEnabled,
                               minScale: 1.0,
-                              maxScale: 8.0,
+                              maxScale: 15.0, // Mis à 9.0 selon ta demande
                               child: LayoutBuilder(
                                 builder: (context, constraints) {
                                   if (_imageWidth == null || _imageHeight == null) {
@@ -1368,6 +1496,7 @@ class _EcranResultatState extends State<EcranResultat> {
                           isDrawGoulotteMode: _isDrawGoulotteMode,
                           isProcessing: _isProcessing,
                           onUndo: _reinitialiserPosition,
+                          onResetPosition: _resetPositionEquipement, // NOUVEAU
                           onToggleGoulotteMode: () {
                             setState(() {
                               _isDrawGoulotteMode = !_isDrawGoulotteMode;
@@ -1429,11 +1558,11 @@ class _EcranResultatState extends State<EcranResultat> {
                   setState(() {
                     _modeleSelectionne = equipement;
                     
-                    // CORRECTION : Nettoyage et reset complet de la pile pour repartir de zéro sur le nouveau modèle
-                    _decalageNotifier.value = Offset.zero;
-                    _historiqueDecalages.clear();
-                    _historiqueDecalages.add(Offset.zero);
-                    _historiqueLengthNotifier.value = 1; // OPTIMISATION : Resynchronise le bouton
+                    // NOUVEAU COMPORTEMENT : On ne reset plus la position !
+                    // La nouvelle clim apparaîtra exactement là où on avait glissé l'ancienne.
+                    // On vide juste le cache des calques pour obliger OpenCV à recalculer le PNG
+                    _calqueEquipementPngBytes = null;
+                    _dernierCalqueEquipementCompletBytes = null;
 
                     // En cas de changement de modèle, on ne recalcule QUE l'équipement !
                     _genererIncrustation(recomputeGoulotte: false, recomputeEquipement: true);
@@ -1473,6 +1602,20 @@ class _EcranResultatState extends State<EcranResultat> {
                             onPressed: () {
                               setState(() {
                                 _attenteConfirmationIA = false;
+                                
+                                // COMPORTEMENT RECTANGLE CLASSIQUE : On snap les points de l'IA pour 
+                                // former un rectangle parfait avant l'édition manuelle !
+                                double minX = _pointsCibles!.map((p) => p['x']!).reduce(math.min);
+                                double maxX = _pointsCibles!.map((p) => p['x']!).reduce(math.max);
+                                double minY = _pointsCibles!.map((p) => p['y']!).reduce(math.min);
+                                double maxY = _pointsCibles!.map((p) => p['y']!).reduce(math.max);
+                                
+                                _pointsCibles = [
+                                  {'x': minX, 'y': minY}, // Haut Gauche
+                                  {'x': maxX, 'y': minY}, // Haut Droit
+                                  {'x': maxX, 'y': maxY}, // Bas Droit
+                                  {'x': minX, 'y': maxY}, // Bas Gauche
+                                ];
                               });
                             },
                             child: Text("Ajuster", style: TextStyle(color: theme.colorScheme.onSurface.withValues(alpha: 0.6))),

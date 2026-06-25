@@ -11,6 +11,7 @@ class BoutonsActionDevis extends StatelessWidget {
   final bool isDrawGoulotteMode;
   final bool isProcessing;
   final VoidCallback onUndo;
+  final VoidCallback onResetPosition; // Permet de remettre l'équipement au centre
   final VoidCallback onToggleGoulotteMode;
   final VoidCallback onDeleteConfirmed;
 
@@ -24,17 +25,18 @@ class BoutonsActionDevis extends StatelessWidget {
     required this.isDrawGoulotteMode,
     required this.isProcessing,
     required this.onUndo,
+    required this.onResetPosition,
     required this.onToggleGoulotteMode,
     required this.onDeleteConfirmed,
   });
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context); // NOUVEAU : Récupération du thème
+    final theme = Theme.of(context); // Récupération du thème
 
     return Column(
       children: [
-        // Le bouton Réinitialiser intelligent (grisé pendant le drag ou le calcul)
+        // Les boutons Historique (Undo et Reset) intelligents
         ValueListenableBuilder<bool>(
           valueListenable: isDraggingEquipementNotifier,
           builder: (context, isDraggingEquipement, _) {
@@ -43,7 +45,7 @@ class BoutonsActionDevis extends StatelessWidget {
               builder: (context, isDraggingGoulotte, _) {
                 
                 // OPTIMISATION : On écoute uniquement la LONGUEUR de l'historique 
-                // Le bouton ne se reconstruira plus jamais pendant que le doigt bouge l'équipement !
+                // Les boutons ne se reconstruiront plus jamais pendant que le doigt bouge l'équipement !
                 return ValueListenableBuilder<int>(
                   valueListenable: historiqueLengthNotifier,
                   builder: (context, historyLength, _) {
@@ -51,42 +53,75 @@ class BoutonsActionDevis extends StatelessWidget {
                       valueListenable: goulotteNotifier,
                       builder: (context, goulotteActuelle, _) {
                         
-                        // 1. Est-ce que le bouton a une raison d'être affiché ?
-                        bool showResetEquipement = !isDrawGoulotteMode && historyLength > 1;
+                        // 1. Est-ce que les boutons ont une raison d'être affichés ?
+                        bool showHistoriqueEquipement = !isDrawGoulotteMode && historyLength > 1;
                         bool showResetGoulotte = isDrawGoulotteMode && 
                                                  goulotteActuelle != null && 
                                                  goulotteInitiale != null && 
                                                  goulotteActuelle != goulotteInitiale;
 
-                        // Si on n'a rien bougé, on ne montre pas le bouton
-                        if (!showResetEquipement && !showResetGoulotte) return const SizedBox.shrink();
+                        // Si on n'a rien bougé, on ne montre pas le bloc d'historique
+                        if (!showHistoriqueEquipement && !showResetGoulotte) return const SizedBox.shrink();
 
                         // 2. Est-ce que le bouton doit être désactivé (grisé) ?
                         bool isDisabled = isProcessing || isDraggingEquipement || isDraggingGoulotte;
 
-                        return Padding(
-                          padding: const EdgeInsets.only(bottom: 12.0),
-                          // STYLE : Bouton flottant Glassmorphism
-                          child: Container(
-                            decoration: BoxDecoration(
-                              shape: BoxShape.circle,
-                              boxShadow: [if (!isDisabled) BoxShadow(color: theme.shadowColor.withValues(alpha: 0.15), blurRadius: 10, offset: const Offset(0, 4))],
-                            ),
-                            child: ClipOval(
-                              child: BackdropFilter(
-                                filter: ImageFilter.blur(sigmaX: 8, sigmaY: 8),
-                                child: Container(
-                                  color: theme.cardColor.withValues(alpha: isDisabled ? 0.4 : 0.85), // S'adapte au mode sombre
-                                  child: IconButton(
-                                    icon: const Icon(Icons.undo), 
-                                    color: isDisabled ? theme.disabledColor : theme.colorScheme.primary, // Grise l'icône si inactif
-                                    tooltip: isDrawGoulotteMode ? 'Réinitialiser la goulotte' : 'Annuler le déplacement',
-                                    onPressed: isDisabled ? null : onUndo, // Désactive l'action
+                        return Column(
+                          children: [
+                            // BOUTON UNDO (Annuler le dernier mouvement pas à pas)
+                            Padding(
+                              padding: const EdgeInsets.only(bottom: 12.0),
+                              // STYLE : Bouton flottant Glassmorphism
+                              child: Container(
+                                decoration: BoxDecoration(
+                                  shape: BoxShape.circle,
+                                  boxShadow: [if (!isDisabled) BoxShadow(color: theme.shadowColor.withValues(alpha: 0.15), blurRadius: 10, offset: const Offset(0, 4))],
+                                ),
+                                child: ClipOval(
+                                  child: BackdropFilter(
+                                    filter: ImageFilter.blur(sigmaX: 8, sigmaY: 8),
+                                    child: Container(
+                                      color: theme.cardColor.withValues(alpha: isDisabled ? 0.4 : 0.85), // S'adapte au mode sombre
+                                      child: IconButton(
+                                        icon: const Icon(Icons.undo), 
+                                        color: isDisabled ? theme.disabledColor : theme.colorScheme.primary, // Grise l'icône si inactif
+                                        tooltip: isDrawGoulotteMode ? 'Réinitialiser la goulotte' : 'Annuler le dernier déplacement',
+                                        onPressed: isDisabled ? null : onUndo, // Désactive l'action
+                                      ),
+                                    ),
                                   ),
                                 ),
                               ),
                             ),
-                          ),
+
+                            // NOUVEAU : BOUTON RESET (Retour immédiat à la case départ)
+                            // Apparaît uniquement pour l'équipement si on l'a bougé
+                            if (showHistoriqueEquipement)
+                              Padding(
+                                padding: const EdgeInsets.only(bottom: 12.0),
+                                child: Container(
+                                  decoration: BoxDecoration(
+                                    shape: BoxShape.circle,
+                                    boxShadow: [if (!isDisabled) BoxShadow(color: theme.shadowColor.withValues(alpha: 0.15), blurRadius: 10, offset: const Offset(0, 4))],
+                                  ),
+                                  child: ClipOval(
+                                    child: BackdropFilter(
+                                      filter: ImageFilter.blur(sigmaX: 8, sigmaY: 8),
+                                      child: Container(
+                                        color: theme.cardColor.withValues(alpha: isDisabled ? 0.4 : 0.85),
+                                        child: IconButton(
+                                          // CORRECTION : Icône universelle de réinitialisation ("Reset")
+                                          icon: const Icon(Icons.restart_alt), 
+                                          color: isDisabled ? theme.disabledColor : theme.colorScheme.secondary, // Utilise la couleur d'accentuation
+                                          tooltip: 'Remettre à la position d\'origine',
+                                          onPressed: isDisabled ? null : onResetPosition,
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                          ],
                         );
                       }
                     );
