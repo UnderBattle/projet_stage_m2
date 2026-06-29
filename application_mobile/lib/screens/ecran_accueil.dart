@@ -26,9 +26,6 @@ class _EcranAccueilState extends State<EcranAccueil> with WidgetsBindingObserver
   
   /// Indique si une image est en cours de redimensionnement pour afficher l'écran de chargement.
   bool _isOptimizing = false;
-  
-  /// Indique si les modèles d'IA sont prêts à être utilisés.
-  bool _isIaReady = false;
 
   // =========================================================================
   // === VARIABLES POUR LE NIVEAU À BULLE ===
@@ -43,9 +40,6 @@ class _EcranAccueilState extends State<EcranAccueil> with WidgetsBindingObserver
     
     // Enregistrement de l'observateur de cycle de vie système
     WidgetsBinding.instance.addObserver(this);
-    
-    // Lance le chargement des modèles d'IA en arrière-plan.
-    _preparerIA();
 
     // Initialise le contrôleur avec la première caméra disponible (généralement la caméra arrière) en haute résolution.
     _initialiserCamera();
@@ -127,16 +121,6 @@ class _EcranAccueilState extends State<EcranAccueil> with WidgetsBindingObserver
     } else {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         _montrerErreur("Aucune caméra détectée sur cet appareil.");
-      });
-    }
-  }
-
-  /// Charge les modèles d'IA et met à jour l'état pour activer les boutons.
-  Future<void> _preparerIA() async {
-    await IAService().initModels();
-    if (mounted) {
-      setState(() {
-        _isIaReady = true;
       });
     }
   }
@@ -303,8 +287,8 @@ class _EcranAccueilState extends State<EcranAccueil> with WidgetsBindingObserver
                       mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                       children: [
                         ElevatedButton.icon(
-                          // Désactive le bouton si une opération est en cours ou si l'IA n'est pas prête.
-                          onPressed: (_isOptimizing || !_isIaReady) ? null : _ouvrirGalerie,
+                          // Désactive le bouton si une opération est en cours
+                          onPressed: _isOptimizing ? null : _ouvrirGalerie,
                           icon: const Icon(Icons.photo_library),
                           label: const Text('Galerie'),
                           style: ElevatedButton.styleFrom(
@@ -316,7 +300,7 @@ class _EcranAccueilState extends State<EcranAccueil> with WidgetsBindingObserver
                           ),
                         ),
                         ElevatedButton.icon(
-                          onPressed: (_isOptimizing || !_isIaReady) ? null : _prendrePhoto,
+                          onPressed: _isOptimizing ? null : _prendrePhoto,
                           icon: const Icon(Icons.camera_alt),
                           label: const Text('Photo'),
                           style: ElevatedButton.styleFrom(
@@ -330,19 +314,6 @@ class _EcranAccueilState extends State<EcranAccueil> with WidgetsBindingObserver
                         ),
                       ],
                     ),
-                    // Affiche un indicateur de chargement pendant que l'IA s'initialise.
-                    if (!_isIaReady)
-                      Padding(
-                        padding: const EdgeInsets.only(top: 15.0),
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            SizedBox(width: 15, height: 15, child: CircularProgressIndicator(strokeWidth: 2, color: theme.colorScheme.primary)),
-                            const SizedBox(width: 10),
-                            Text("Chargement du moteur IA...", style: TextStyle(color: theme.colorScheme.onSurface.withValues(alpha: 0.5), fontStyle: FontStyle.italic)),
-                          ],
-                        ),
-                      ),
                   ],
                 ),
               ),

@@ -60,9 +60,6 @@ class _EcranResultatState extends State<EcranResultat> {
   // NOUVEAU : Gère l'affichage de la carte de confirmation en bas de l'écran
   bool _attenteConfirmationIA = false;
 
-  // Sécurité pour ne charger le catalogue en RAM qu'une seule fois
-  bool _isCatalogPrecached = false;
-
   // Contrôleur pour gérer programmatiquement le zoom et le déplacement de l'image
   final TransformationController _transformationController = TransformationController();
 
@@ -104,7 +101,7 @@ class _EcranResultatState extends State<EcranResultat> {
   void initState() {
     super.initState();
     
-    // Initialisation de l'Isolate persistant pour OpenCV
+    // Initialisation de l'Isolate persistant pour OpenCV (S'il l'est déjà par le Splash, ça passera très vite)
     TraitementImage.initWorker();
     
     // Dynamisme parfait basé sur le catalogue existant
@@ -112,29 +109,8 @@ class _EcranResultatState extends State<EcranResultat> {
     _analyserImage();
   }
 
-  // =========================================================================
-  // === OPTIMISATION : MISE EN CACHE RAM DU CATALOGUE ===
-  // =========================================================================
-  @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    // didChangeDependencies nous donne accès au 'context' nécessaire pour precacheImage
-    if (!_isCatalogPrecached) {
-      _precacherCatalogue();
-      _isCatalogPrecached = true;
-    }
-  }
-
-  /// Parcourt le catalogue et met les images en cache RAM pour un affichage instantané
-  void _precacherCatalogue() {
-    final catalogueGlobal = CatalogueService().catalogueGlobal;
-    for (var listeEquipements in catalogueGlobal.values) {
-      for (var equipement in listeEquipements) {
-        precacheImage(AssetImage(equipement.chemin), context);
-      }
-    }
-    print("[Optimisation] Images du catalogue préchargées en RAM/VRAM avec succès !");
-  }
+  // CORRECTION : L'optimisation du pré-chargement en RAM (didChangeDependencies) 
+  // a été totalement déléguée au Splash Screen ! Code nettoyé et allégé.
 
   @override
   void dispose() {
@@ -610,6 +586,79 @@ class _EcranResultatState extends State<EcranResultat> {
   }
 
   // =========================================================================
+  // === LOGIQUE DE PLACEMENT MANUEL EXTRAITE (REFACTORING) ===
+  // =========================================================================
+
+  /// ALIGNEMENT STRICT : On convertit la forme de l'IA en VRAI RECTANGLE
+  void _alignerZoneSelectionSurRectangle() {
+    double minX = _pointsCibles!.map((p) => p['x']!).reduce(math.min);
+    double maxX = _pointsCibles!.map((p) => p['x']!).reduce(math.max);
+    double minY = _pointsCibles!.map((p) => p['y']!).reduce(math.min);
+    double maxY = _pointsCibles!.map((p) => p['y']!).reduce(math.max);
+    
+    _pointsCibles = [
+      {'x': minX, 'y': minY}, // Haut Gauche
+      {'x': maxX, 'y': minY}, // Haut Droit
+      {'x': maxX, 'y': maxY}, // Bas Droit
+      {'x': minX, 'y': maxY}, // Bas Gauche
+    ];
+  }
+
+  /// Déplace la zone de sélection manuelle sans la déformer
+  void _deplacerZoneSelectionComplete(double dx1024, double dy1024) {
+    bool canMove = true;
+    for (var p in _pointsCibles!) {
+      double newX = p['x']! + dx1024;
+      double newY = p['y']! + dy1024;
+      if (newX < 0 || newX > 1024 || newY < 0 || newY > 1024) {
+        canMove = false;
+        break;
+      }
+    }
+    
+    if (canMove) {
+      for (int i = 0; i < 4; i++) {
+        _pointsCibles![i]['x'] = _pointsCibles![i]['x']! + dx1024;
+        _pointsCibles![i]['y'] = _pointsCibles![i]['y']! + dy1024;
+      }
+    }
+  }
+
+  /// CORRECTION MAJEURE : COMPORTEMENT "RECTANGLE CLASSIQUE PAINT"
+  /// Tirer un coin modifie automatiquement ses voisins pour garder les angles à 90° !
+  void _redimensionnerRectangleManuel(int idx, double newX, double newY) {
+    if (idx == 0) { // Haut-Gauche
+      if (newX >= _pointsCibles![1]['x']! - 10) newX = _pointsCibles![1]['x']! - 10;
+      if (newY >= _pointsCibles![3]['y']! - 10) newY = _pointsCibles![3]['y']! - 10;
+      _pointsCibles![0]['x'] = newX;
+      _pointsCibles![0]['y'] = newY;
+      _pointsCibles![1]['y'] = newY; // Aligne Haut-Droit
+      _pointsCibles![3]['x'] = newX; // Aligne Bas-Gauche
+    } else if (idx == 1) { // Haut-Droit
+      if (newX <= _pointsCibles![0]['x']! + 10) newX = _pointsCibles![0]['x']! + 10;
+      if (newY >= _pointsCibles![2]['y']! - 10) newY = _pointsCibles![2]['y']! - 10;
+      _pointsCibles![1]['x'] = newX;
+      _pointsCibles![1]['y'] = newY;
+      _pointsCibles![0]['y'] = newY; // Aligne Haut-Gauche
+      _pointsCibles![2]['x'] = newX; // Aligne Bas-Droit
+    } else if (idx == 2) { // Bas-Droit
+      if (newX <= _pointsCibles![3]['x']! + 10) newX = _pointsCibles![3]['x']! + 10;
+      if (newY <= _pointsCibles![1]['y']! + 10) newY = _pointsCibles![1]['y']! + 10;
+      _pointsCibles![2]['x'] = newX;
+      _pointsCibles![2]['y'] = newY;
+      _pointsCibles![3]['y'] = newY; // Aligne Bas-Gauche
+      _pointsCibles![1]['x'] = newX; // Aligne Haut-Droit
+    } else if (idx == 3) { // Bas-Gauche
+      if (newX >= _pointsCibles![2]['x']! - 10) newX = _pointsCibles![2]['x']! - 10;
+      if (newY <= _pointsCibles![0]['y']! + 10) newY = _pointsCibles![0]['y']! + 10;
+      _pointsCibles![3]['x'] = newX;
+      _pointsCibles![3]['y'] = newY;
+      _pointsCibles![2]['y'] = newY; // Aligne Bas-Droit
+      _pointsCibles![0]['x'] = newX; // Aligne Haut-Gauche
+    }
+  }
+
+  // =========================================================================
   // === UI : DÉCOUPAGE EN WIDGETS (POUR ALLÉGER LE BUILD) ===
   // =========================================================================
 
@@ -670,19 +719,7 @@ class _EcranResultatState extends State<EcranResultat> {
                   if (_attenteConfirmationIA) {
                     setState(() {
                       _attenteConfirmationIA = false;
-                      
-                      // ALIGNEMENT STRICT : On convertit la forme de l'IA en VRAI RECTANGLE
-                      double minX = _pointsCibles!.map((p) => p['x']!).reduce(math.min);
-                      double maxX = _pointsCibles!.map((p) => p['x']!).reduce(math.max);
-                      double minY = _pointsCibles!.map((p) => p['y']!).reduce(math.min);
-                      double maxY = _pointsCibles!.map((p) => p['y']!).reduce(math.max);
-                      
-                      _pointsCibles = [
-                        {'x': minX, 'y': minY}, // Haut Gauche
-                        {'x': maxX, 'y': minY}, // Haut Droit
-                        {'x': maxX, 'y': maxY}, // Bas Droit
-                        {'x': minX, 'y': maxY}, // Bas Gauche
-                      ];
+                      _alignerZoneSelectionSurRectangle(); // Utilisation de la méthode extraite
                     });
                   }
                 },
@@ -696,22 +733,7 @@ class _EcranResultatState extends State<EcranResultat> {
                     double dx1024 = dxOrig * (1024.0 / _imageWidth!);
                     double dy1024 = dyOrig * (1024.0 / _imageHeight!);
                     
-                    bool canMove = true;
-                    for (var p in _pointsCibles!) {
-                      double newX = p['x']! + dx1024;
-                      double newY = p['y']! + dy1024;
-                      if (newX < 0 || newX > 1024 || newY < 0 || newY > 1024) {
-                        canMove = false;
-                        break;
-                      }
-                    }
-                    
-                    if (canMove) {
-                      for (int i = 0; i < 4; i++) {
-                        _pointsCibles![i]['x'] = _pointsCibles![i]['x']! + dx1024;
-                        _pointsCibles![i]['y'] = _pointsCibles![i]['y']! + dy1024;
-                      }
-                    }
+                    _deplacerZoneSelectionComplete(dx1024, dy1024); // Utilisation de la méthode extraite
                   });
                 },
                 child: Container(color: Colors.transparent),
@@ -737,19 +759,7 @@ class _EcranResultatState extends State<EcranResultat> {
                     if (_attenteConfirmationIA) {
                       setState(() {
                         _attenteConfirmationIA = false;
-                        
-                        // ALIGNEMENT STRICT : Dès qu'on touche un coin, ça devient un rectangle parfait
-                        double minX = _pointsCibles!.map((p) => p['x']!).reduce(math.min);
-                        double maxX = _pointsCibles!.map((p) => p['x']!).reduce(math.max);
-                        double minY = _pointsCibles!.map((p) => p['y']!).reduce(math.min);
-                        double maxY = _pointsCibles!.map((p) => p['y']!).reduce(math.max);
-                        
-                        _pointsCibles = [
-                          {'x': minX, 'y': minY}, // Haut Gauche
-                          {'x': maxX, 'y': minY}, // Haut Droit
-                          {'x': maxX, 'y': maxY}, // Bas Droit
-                          {'x': minX, 'y': maxY}, // Bas Gauche
-                        ];
+                        _alignerZoneSelectionSurRectangle(); // Utilisation de la méthode extraite
                       });
                     }
                   },
@@ -766,37 +776,7 @@ class _EcranResultatState extends State<EcranResultat> {
                       double newX = (_pointsCibles![idx]['x']! + dx1024).clamp(0.0, 1024.0);
                       double newY = (_pointsCibles![idx]['y']! + dy1024).clamp(0.0, 1024.0);
 
-                      // CORRECTION MAJEURE : COMPORTEMENT "RECTANGLE CLASSIQUE PAINT"
-                      // Tirer un coin modifie automatiquement ses voisins pour garder les angles à 90° !
-                      if (idx == 0) { // Haut-Gauche
-                        if (newX >= _pointsCibles![1]['x']! - 10) newX = _pointsCibles![1]['x']! - 10;
-                        if (newY >= _pointsCibles![3]['y']! - 10) newY = _pointsCibles![3]['y']! - 10;
-                        _pointsCibles![0]['x'] = newX;
-                        _pointsCibles![0]['y'] = newY;
-                        _pointsCibles![1]['y'] = newY; // Aligne Haut-Droit
-                        _pointsCibles![3]['x'] = newX; // Aligne Bas-Gauche
-                      } else if (idx == 1) { // Haut-Droit
-                        if (newX <= _pointsCibles![0]['x']! + 10) newX = _pointsCibles![0]['x']! + 10;
-                        if (newY >= _pointsCibles![2]['y']! - 10) newY = _pointsCibles![2]['y']! - 10;
-                        _pointsCibles![1]['x'] = newX;
-                        _pointsCibles![1]['y'] = newY;
-                        _pointsCibles![0]['y'] = newY; // Aligne Haut-Gauche
-                        _pointsCibles![2]['x'] = newX; // Aligne Bas-Droit
-                      } else if (idx == 2) { // Bas-Droit
-                        if (newX <= _pointsCibles![3]['x']! + 10) newX = _pointsCibles![3]['x']! + 10;
-                        if (newY <= _pointsCibles![1]['y']! + 10) newY = _pointsCibles![1]['y']! + 10;
-                        _pointsCibles![2]['x'] = newX;
-                        _pointsCibles![2]['y'] = newY;
-                        _pointsCibles![3]['y'] = newY; // Aligne Bas-Gauche
-                        _pointsCibles![1]['x'] = newX; // Aligne Haut-Droit
-                      } else if (idx == 3) { // Bas-Gauche
-                        if (newX >= _pointsCibles![2]['x']! - 10) newX = _pointsCibles![2]['x']! - 10;
-                        if (newY <= _pointsCibles![0]['y']! + 10) newY = _pointsCibles![0]['y']! + 10;
-                        _pointsCibles![3]['x'] = newX;
-                        _pointsCibles![3]['y'] = newY;
-                        _pointsCibles![2]['y'] = newY; // Aligne Bas-Droit
-                        _pointsCibles![0]['x'] = newX; // Aligne Haut-Gauche
-                      }
+                      _redimensionnerRectangleManuel(idx, newX, newY); // Utilisation de la méthode extraite
                     });
                   },
                   child: Container(
@@ -1450,6 +1430,102 @@ class _EcranResultatState extends State<EcranResultat> {
   }
 
   // =========================================================================
+  // === SOUS-WIDGETS EXTRAITS DE LA MÉTHODE BUILD (REFACTORING) ===
+  // =========================================================================
+
+  /// Extrait l'overlay de chargement en verre fumé (Glassmorphism)
+  Widget _buildEcranChargementFloute() {
+    return BackdropFilter(
+      filter: ImageFilter.blur(sigmaX: 5.0, sigmaY: 5.0),
+      child: Container(
+        color: Colors.black.withValues(alpha: 0.4), // On garde le noir pour l'effet de verre fumé (même en light mode)
+        child: Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const CircularProgressIndicator(color: Colors.white),
+              const SizedBox(height: 20),
+              Text(_loadingMessage, style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w500), textAlign: TextAlign.center),
+            ],
+          )
+        )
+      ),
+    );
+  }
+
+  /// Extrait la carte flottante demandant confirmation de la détection IA
+  Widget _buildCarteConfirmationIA(ThemeData theme) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16.0),
+      child: Card(
+        elevation: 8,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        color: theme.cardColor,
+        child: Padding(
+          padding: const EdgeInsets.all(16.0),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text("Détection automatique", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: theme.colorScheme.onSurface)),
+              const SizedBox(height: 8),
+              Text("L'IA a détecté l'autocollant. Cette sélection vous convient-elle ?", style: TextStyle(color: theme.colorScheme.onSurface.withValues(alpha: 0.8)), textAlign: TextAlign.center),
+              const SizedBox(height: 16),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                children: [
+                  TextButton(
+                    onPressed: () {
+                      setState(() {
+                        _attenteConfirmationIA = false;
+                        _alignerZoneSelectionSurRectangle(); // COMPORTEMENT RECTANGLE CLASSIQUE
+                      });
+                    },
+                    child: Text("Ajuster", style: TextStyle(color: theme.colorScheme.onSurface.withValues(alpha: 0.6))),
+                  ),
+                  ElevatedButton.icon(
+                    icon: const Icon(Icons.check, size: 18),
+                    label: const Text("Oui, valider"),
+                    style: ElevatedButton.styleFrom(backgroundColor: theme.colorScheme.primary, foregroundColor: theme.colorScheme.onPrimary),
+                    onPressed: () {
+                      setState(() {
+                        _attenteConfirmationIA = false;
+                      });
+                      _validerPlacementManuel(); // IA validée, on passe à l'inpainting
+                    },
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Logique du panneau d'action flottant en bas de l'écran
+  Widget? _buildPanneauActionBasse(ThemeData theme) {
+    if (_attenteConfirmationIA) {
+      // 1. CARTE DE CONFIRMATION DE L'IA
+      return _buildCarteConfirmationIA(theme);
+    } else if (_isManualPlacementMode) {
+      // 2. BOUTON DE VALIDATION DU MODE MANUEL (Ajustement humain)
+      return FloatingActionButton.extended(
+        onPressed: _validerPlacementManuel,
+        label: const Text("Valider la position", style: TextStyle(fontWeight: FontWeight.bold)),
+        icon: const Icon(Icons.check),
+      );
+    } else if (_imageResultatBytes != null && !_isProcessing) {
+      // 3. BOUTON DE SAUVEGARDE FINALE
+      return FloatingActionButton.extended(
+        onPressed: _sauvegarderImage,
+        label: const Text("Sauvegarder", style: TextStyle(fontWeight: FontWeight.bold)),
+        icon: const Icon(Icons.download),
+      );
+    }
+    return null;
+  }
+
+  // =========================================================================
   // === BUILD PRINCIPAL ===
   // =========================================================================
   @override
@@ -1586,22 +1662,7 @@ class _EcranResultatState extends State<EcranResultat> {
                             valueListenable: _isDraggingEquipementNotifier,
                             builder: (context, isDragging, _) {
                                if (isDragging) return const SizedBox.shrink(); 
-                               return BackdropFilter(
-                                filter: ImageFilter.blur(sigmaX: 5.0, sigmaY: 5.0),
-                                child: Container(
-                                  color: Colors.black.withValues(alpha: 0.4), // On garde le noir pour l'effet de verre fumé (même en light mode)
-                                  child: Center(
-                                    child: Column(
-                                      mainAxisSize: MainAxisSize.min,
-                                      children: [
-                                        const CircularProgressIndicator(color: Colors.white),
-                                        const SizedBox(height: 20),
-                                        Text(_loadingMessage, style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w500), textAlign: TextAlign.center),
-                                      ],
-                                    )
-                                  )
-                                ),
-                              );
+                               return _buildEcranChargementFloute(); // REFACTORING : Méthode extraite
                             }
                           ),
                         ),
@@ -1643,86 +1704,8 @@ class _EcranResultatState extends State<EcranResultat> {
         ),
       ),
       
-      // =========================================================================
-      // === LOGIQUE DES BOUTONS FLOTTANTS (EN BAS DE L'ÉCRAN) ===
-      // =========================================================================
-      floatingActionButton: _attenteConfirmationIA 
-          // 1. CARTE DE CONFIRMATION DE L'IA (Remplaçant l'ancien AlertDialog bloquant)
-          ? Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16.0),
-              child: Card(
-                elevation: 8,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-                color: theme.cardColor,
-                child: Padding(
-                  padding: const EdgeInsets.all(16.0),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text("Détection automatique", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: theme.colorScheme.onSurface)),
-                      const SizedBox(height: 8),
-                      Text("L'IA a détecté l'autocollant. Cette sélection vous convient-elle ?", style: TextStyle(color: theme.colorScheme.onSurface.withValues(alpha: 0.8)), textAlign: TextAlign.center),
-                      const SizedBox(height: 16),
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                        children: [
-                          TextButton(
-                            onPressed: () {
-                              setState(() {
-                                _attenteConfirmationIA = false;
-                                
-                                // COMPORTEMENT RECTANGLE CLASSIQUE : On snap les points de l'IA pour 
-                                // former un rectangle parfait avant l'édition manuelle !
-                                double minX = _pointsCibles!.map((p) => p['x']!).reduce(math.min);
-                                double maxX = _pointsCibles!.map((p) => p['x']!).reduce(math.max);
-                                double minY = _pointsCibles!.map((p) => p['y']!).reduce(math.min);
-                                double maxY = _pointsCibles!.map((p) => p['y']!).reduce(math.max);
-                                
-                                _pointsCibles = [
-                                  {'x': minX, 'y': minY}, // Haut Gauche
-                                  {'x': maxX, 'y': minY}, // Haut Droit
-                                  {'x': maxX, 'y': maxY}, // Bas Droit
-                                  {'x': minX, 'y': maxY}, // Bas Gauche
-                                ];
-                              });
-                            },
-                            child: Text("Ajuster", style: TextStyle(color: theme.colorScheme.onSurface.withValues(alpha: 0.6))),
-                          ),
-                          ElevatedButton.icon(
-                            icon: const Icon(Icons.check, size: 18),
-                            label: const Text("Oui, valider"),
-                            style: ElevatedButton.styleFrom(backgroundColor: theme.colorScheme.primary, foregroundColor: theme.colorScheme.onPrimary),
-                            onPressed: () {
-                              setState(() {
-                                _attenteConfirmationIA = false;
-                              });
-                              _validerPlacementManuel(); // IA validée, on passe à l'inpainting
-                            },
-                          ),
-                        ],
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            )
-          // 2. BOUTON DE VALIDATION DU MODE MANUEL (Ajustement humain)
-          : _isManualPlacementMode
-              ? FloatingActionButton.extended(
-                  onPressed: _validerPlacementManuel,
-                  label: const Text("Valider la position", style: TextStyle(fontWeight: FontWeight.bold)),
-                  icon: const Icon(Icons.check),
-                  // La couleur provient automatiquement de floatingActionButtonTheme
-                )
-          // 3. BOUTON DE SAUVEGARDE FINALE
-              : (_imageResultatBytes != null && !_isProcessing)
-                  ? FloatingActionButton.extended(
-                      onPressed: _sauvegarderImage,
-                      label: const Text("Sauvegarder", style: TextStyle(fontWeight: FontWeight.bold)),
-                      icon: const Icon(Icons.download),
-                      // La couleur provient automatiquement de floatingActionButtonTheme
-                    )
-                  : null,
+      // REFACTORING : Les 3 boutons d'actions conditionnels sont déportés dans une méthode propre
+      floatingActionButton: _buildPanneauActionBasse(theme),
       floatingActionButtonLocation: FloatingActionButtonLocation.centerFloat,
     );
   }

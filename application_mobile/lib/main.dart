@@ -1,23 +1,15 @@
 import 'package:flutter/material.dart';
-import 'package:camera/camera.dart';
-import 'screens/ecran_accueil.dart';
+import 'screens/ecran_splash.dart'; // NOUVEAU : Import du Splash Screen
 import 'utils/image_utils.dart';
-import 'theme/app_theme.dart'; // NOUVEAU : Importation du thème global
-
-/// Liste globale contenant les caméras disponibles sur l'appareil.
-List<CameraDescription> cameras = [];
+import 'theme/app_theme.dart';
 
 /// Point d'entrée principal de l'application.
-/// Initialise le framework Flutter et tente de récupérer les caméras avant de lancer l'interface.
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   nettoyerCacheImages();
 
-  try {
-    cameras = await availableCameras();
-  } on CameraException catch (e) {
-    print('Erreur caméra : ${e.code}, ${e.description}');
-  }
+  // CORRECTION : L'initialisation des caméras a été déplacée dans l'EcranSplash 
+  // pour que l'application s'ouvre instantanément !
   runApp(const MonApplication());
 }
 
@@ -29,14 +21,14 @@ class MonApplication extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Simulateur d\'Installation', // Titre généralisé
+      title: 'Simulateur d\'Installation', 
       debugShowCheckedModeBanner: false,
       theme: AppTheme.lightTheme,
       darkTheme: AppTheme.darkTheme,
       themeMode: ThemeMode.system, // S'adapte automatiquement au réglage du téléphone
       
-      // Passe la liste des caméras à l'écran d'accueil pour initialiser l'appareil photo.
-      home: EcranAccueil(cameras: cameras), 
+      // L'application démarre désormais sur l'écran de chargement optimisé
+      home: const EcranSplash(), 
     );
   }
 }
