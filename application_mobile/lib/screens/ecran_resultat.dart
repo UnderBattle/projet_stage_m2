@@ -75,14 +75,18 @@ class _EcranResultatState extends State<EcranResultat> {
 
   // Pile d'historique pour annuler les déplacements successifs de l'équipement
   final List<Offset> _historiqueDecalages = [Offset.zero];
+  // NOUVEAU : Pile d'historique pour Rétablir (Redo)
+  final List<Offset> _historiqueRedoDecalages = [];
   
   // OPTIMISATION : Notifier ultra-léger pour dire au bouton Undo de s'afficher SANS recalculer à chaque frame du glissement
   final ValueNotifier<int> _historiqueLengthNotifier = ValueNotifier(1);
+  final ValueNotifier<int> _historiqueRedoLengthNotifier = ValueNotifier(0); // NOUVEAU
 
   // Variables d'état pour la Goulotte interactive
   bool _isDrawGoulotteMode = false;
   final ValueNotifier<LigneGoulotte?> _goulotteNotifier = ValueNotifier(null);
   LigneGoulotte? _goulotteInitiale; // Mémoire de la position de départ de la goulotte pour le bouton Undo
+  LigneGoulotte? _goulotteRedo; // NOUVEAU : Mémoire pour rétablir une goulotte annulée
   
   final ValueNotifier<bool> _isDraggingGoulotteNotifier = ValueNotifier(false);
 
@@ -139,6 +143,7 @@ class _EcranResultatState extends State<EcranResultat> {
     _splitNotifier.dispose();
     _isDraggingEquipementNotifier.dispose();
     _historiqueLengthNotifier.dispose(); // OPTIMISATION: Nettoyage
+    _historiqueRedoLengthNotifier.dispose(); // NOUVEAU
     _goulotteNotifier.dispose();
     _isDraggingGoulotteNotifier.dispose();
     _goulotteCurrentEndOrigNotifier.dispose();
@@ -511,15 +516,47 @@ class _EcranResultatState extends State<EcranResultat> {
     if (_isDrawGoulotteMode) {
       // Mode Goulotte : On annule le mouvement et on revient à la ligne d'origine
       if (_goulotteNotifier.value != null && _goulotteInitiale != null) {
+        _goulotteRedo = _goulotteNotifier.value; // NOUVEAU : Sauvegarde pour le Redo
+        _historiqueRedoLengthNotifier.value = 1; // NOUVEAU
+        
         _goulotteNotifier.value = _goulotteInitiale;
         _genererIncrustation(recomputeGoulotte: true, recomputeEquipement: false);
       }
     } else {
       // CORRECTION : Mode Equipement -> On dépile le dernier élément pour faire un Undo étape par étape
       if (_historiqueDecalages.length > 1) {
-        _historiqueDecalages.removeLast(); // Retire la position courante
+        Offset currentPos = _historiqueDecalages.removeLast(); // Retire la position courante
+        _historiqueRedoDecalages.add(currentPos); // NOUVEAU : Sauvegarde pour le Redo
+        
         _decalageNotifier.value = _historiqueDecalages.last; // Applique la précédente
         _historiqueLengthNotifier.value = _historiqueDecalages.length; // OPTIMISATION : Déclenche la MAJ UI de manière ciblée
+        _historiqueRedoLengthNotifier.value = _historiqueRedoDecalages.length; // NOUVEAU
+        
+        _genererIncrustation(recomputeGoulotte: false, recomputeEquipement: true);
+      }
+    }
+  }
+
+  // NOUVEAU : Méthode pour Rétablir (Redo)
+  void _retablirPosition() {
+    if (_isProcessing) return;
+
+    if (_isDrawGoulotteMode) {
+      if (_goulotteRedo != null) {
+        _goulotteNotifier.value = _goulotteRedo;
+        _goulotteRedo = null;
+        _historiqueRedoLengthNotifier.value = 0;
+        _genererIncrustation(recomputeGoulotte: true, recomputeEquipement: false);
+      }
+    } else {
+      if (_historiqueRedoDecalages.isNotEmpty) {
+        Offset redonePos = _historiqueRedoDecalages.removeLast();
+        _decalageNotifier.value = redonePos;
+        _historiqueDecalages.add(redonePos);
+        
+        _historiqueLengthNotifier.value = _historiqueDecalages.length;
+        _historiqueRedoLengthNotifier.value = _historiqueRedoDecalages.length;
+        
         _genererIncrustation(recomputeGoulotte: false, recomputeEquipement: true);
       }
     }
@@ -534,6 +571,9 @@ class _EcranResultatState extends State<EcranResultat> {
       _historiqueDecalages.clear();
       _historiqueDecalages.add(Offset.zero);
       _historiqueLengthNotifier.value = 1; // Cache les boutons undo/reset
+      
+      _historiqueRedoDecalages.clear(); // NOUVEAU : On vide aussi le redo
+      _historiqueRedoLengthNotifier.value = 0;
     });
 
     // On recalcule le PNG à la position zéro
@@ -843,6 +883,10 @@ class _EcranResultatState extends State<EcranResultat> {
             onPanEnd: (_) {
               if (!_isDraggingGoulotteNotifier.value) return;
               _isDraggingGoulotteNotifier.value = false;
+              // NOUVEAU : On efface le redo de la goulotte
+              _goulotteRedo = null;
+              _historiqueRedoLengthNotifier.value = 0;
+              
               // Seule la goulotte a bougé !
               _genererIncrustation(recomputeGoulotte: true, recomputeEquipement: false);
             },
@@ -890,6 +934,10 @@ class _EcranResultatState extends State<EcranResultat> {
             _magnifierPositionNotifier.value = null; // Cache la loupe
             if (!_isDraggingGoulotteNotifier.value) return;
             _isDraggingGoulotteNotifier.value = false;
+            // NOUVEAU : On efface le redo de la goulotte
+            _goulotteRedo = null;
+            _historiqueRedoLengthNotifier.value = 0;
+            
             _genererIncrustation(recomputeGoulotte: true, recomputeEquipement: false);
           },
           onPanCancel: () {
@@ -936,6 +984,10 @@ class _EcranResultatState extends State<EcranResultat> {
             _magnifierPositionNotifier.value = null; // Cache la loupe
             if (!_isDraggingGoulotteNotifier.value) return;
             _isDraggingGoulotteNotifier.value = false;
+            // NOUVEAU : On efface le redo de la goulotte
+            _goulotteRedo = null;
+            _historiqueRedoLengthNotifier.value = 0;
+            
             _genererIncrustation(recomputeGoulotte: true, recomputeEquipement: false);
           },
           onPanCancel: () {
@@ -1229,6 +1281,10 @@ class _EcranResultatState extends State<EcranResultat> {
                                if (_historiqueDecalages.isEmpty || _historiqueDecalages.last != _decalageNotifier.value) {
                                  _historiqueDecalages.add(_decalageNotifier.value);
                                  _historiqueLengthNotifier.value = _historiqueDecalages.length; // OPTIMISATION : Demande la MAJ du bouton Undo
+                                 
+                                 // NOUVEAU : Une nouvelle action vide l'historique "Redo"
+                                 _historiqueRedoDecalages.clear();
+                                 _historiqueRedoLengthNotifier.value = 0;
                                }
 
                                // On ne re-calcule que l'Equipement ! C'est ce qui fait gagner du temps.
@@ -1311,6 +1367,10 @@ class _EcranResultatState extends State<EcranResultat> {
                         LigneGoulotte newGoulotte = LigneGoulotte(_goulotteStartOrig!, _goulotteCurrentEndOrigNotifier.value!);
                         _goulotteInitiale = newGoulotte; 
                         _goulotteNotifier.value = newGoulotte;
+                        
+                        // NOUVEAU : On vide le redo
+                        _goulotteRedo = null;
+                        _historiqueRedoLengthNotifier.value = 0;
                         
                         _goulotteStartOrig = null;
                         _goulotteCurrentEndOrigNotifier.value = null;
@@ -1448,7 +1508,7 @@ class _EcranResultatState extends State<EcranResultat> {
                               panEnabled: isPanZoomEnabled,
                               scaleEnabled: isPanZoomEnabled,
                               minScale: 1.0,
-                              maxScale: 15.0, // Mis à 9.0 selon ta demande
+                              maxScale: 9.0, // Mis à 9.0 selon ta demande
                               child: LayoutBuilder(
                                 builder: (context, constraints) {
                                   if (_imageWidth == null || _imageHeight == null) {
@@ -1491,12 +1551,14 @@ class _EcranResultatState extends State<EcranResultat> {
                           isDraggingEquipementNotifier: _isDraggingEquipementNotifier,
                           isDraggingGoulotteNotifier: _isDraggingGoulotteNotifier,
                           historiqueLengthNotifier: _historiqueLengthNotifier,
+                          historiqueRedoLengthNotifier: _historiqueRedoLengthNotifier, // NOUVEAU
                           goulotteNotifier: _goulotteNotifier,
                           goulotteInitiale: _goulotteInitiale,
                           isDrawGoulotteMode: _isDrawGoulotteMode,
                           isProcessing: _isProcessing,
                           onUndo: _reinitialiserPosition,
-                          onResetPosition: _resetPositionEquipement, // NOUVEAU
+                          onRedo: _retablirPosition, // NOUVEAU
+                          onResetPosition: _resetPositionEquipement,
                           onToggleGoulotteMode: () {
                             setState(() {
                               _isDrawGoulotteMode = !_isDrawGoulotteMode;
@@ -1506,6 +1568,9 @@ class _EcranResultatState extends State<EcranResultat> {
                           onDeleteConfirmed: () {
                             _goulotteNotifier.value = null; // Vide la goulotte unique
                             _goulotteInitiale = null; // On vide aussi l'historique
+                            _goulotteRedo = null; // NOUVEAU
+                            _historiqueRedoLengthNotifier.value = 0; // NOUVEAU
+                            
                             // On force le recalcul uniquement de la goulotte (qui disparaît)
                             _genererIncrustation(recomputeGoulotte: true, recomputeEquipement: false); 
                           },
@@ -1563,6 +1628,9 @@ class _EcranResultatState extends State<EcranResultat> {
                     // On vide juste le cache des calques pour obliger OpenCV à recalculer le PNG
                     _calqueEquipementPngBytes = null;
                     _dernierCalqueEquipementCompletBytes = null;
+                    
+                    _historiqueRedoDecalages.clear(); // NOUVEAU
+                    _historiqueRedoLengthNotifier.value = 0; // NOUVEAU
 
                     // En cas de changement de modèle, on ne recalcule QUE l'équipement !
                     _genererIncrustation(recomputeGoulotte: false, recomputeEquipement: true);

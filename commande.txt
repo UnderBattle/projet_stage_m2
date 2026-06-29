@@ -1,2 +1,4 @@
 - Export un modèle en .tflite
 yolo export model=src/runs/pose/train3/weights/best.pt format=tflite imgsz=1024 optimize=True
+- Build APK (Faut prendre le deuxième fichier aka app-arm64-v8a-release.apk) :
+flutter build apk --release --split-per-abi

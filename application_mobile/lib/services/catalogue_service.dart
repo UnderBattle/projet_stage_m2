@@ -39,7 +39,7 @@ class CatalogueService {
         largeur: 798.0,
       )
     ],
-    'Unités Extérieures': [
+    'Pompes à Chaleur': [
       Equipement(
         nom: 'Takao Plus Unité Extérieure',
         chemin: 'assets/installations/unites_exterieures/unite_exterieure_takao_plus/unite_exterieure_takao_plus.png',
@@ -47,8 +47,8 @@ class CatalogueService {
         hauteur: 542.0,
         largeur: 799.0,
       )
-    ],
-    'Pompes à Chaleur': [], 
-    'Chaudières': []
+    ], 
+    'Gaz & Fioul': [],
+    'Thermodynamique': []
   };
 }
