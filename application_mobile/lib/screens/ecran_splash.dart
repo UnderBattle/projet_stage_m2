@@ -97,7 +97,7 @@ class _EcranSplashState extends State<EcranSplash> {
             ),
             const SizedBox(height: 10),
             Text(
-              "Initialisation du moteur 3D...", 
+              "Initialisation...", 
               style: TextStyle(color: Colors.white70, fontSize: 16, fontStyle: FontStyle.italic)
             ),
             const SizedBox(height: 40),
