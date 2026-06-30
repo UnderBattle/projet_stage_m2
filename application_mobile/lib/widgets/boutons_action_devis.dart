@@ -6,14 +6,14 @@ class BoutonsActionDevis extends StatelessWidget {
   final ValueNotifier<bool> isDraggingEquipementNotifier;
   final ValueNotifier<bool> isDraggingGoulotteNotifier;
   final ValueNotifier<int> historiqueLengthNotifier;
-  final ValueNotifier<int> historiqueRedoLengthNotifier; // NOUVEAU : Notifie s'il y a des actions à rétablir
+  final ValueNotifier<int> historiqueRedoLengthNotifier; 
   final ValueNotifier<LigneGoulotte?> goulotteNotifier;
   final LigneGoulotte? goulotteInitiale;
   final bool isDrawGoulotteMode;
   final bool isProcessing;
   final VoidCallback onUndo;
-  final VoidCallback onRedo; // NOUVEAU : Action pour rétablir
-  final VoidCallback onResetPosition; // Permet de remettre l'équipement au centre
+  final VoidCallback onRedo; 
+  final VoidCallback onResetPosition; 
   final VoidCallback onToggleGoulotteMode;
   final VoidCallback onDeleteConfirmed;
 
@@ -22,13 +22,13 @@ class BoutonsActionDevis extends StatelessWidget {
     required this.isDraggingEquipementNotifier,
     required this.isDraggingGoulotteNotifier,
     required this.historiqueLengthNotifier,
-    required this.historiqueRedoLengthNotifier, // NOUVEAU
+    required this.historiqueRedoLengthNotifier, 
     required this.goulotteNotifier,
     required this.goulotteInitiale,
     required this.isDrawGoulotteMode,
     required this.isProcessing,
     required this.onUndo,
-    required this.onRedo, // NOUVEAU
+    required this.onRedo, 
     required this.onResetPosition,
     required this.onToggleGoulotteMode,
     required this.onDeleteConfirmed,
@@ -39,7 +39,7 @@ class BoutonsActionDevis extends StatelessWidget {
     final theme = Theme.of(context); // Récupération du thème
 
     return Column(
-      // NOUVEAU : On aligne la colonne à droite pour que l'ajout du bouton Redo ne décale pas les boutons du dessous
+      // On aligne la colonne à droite pour éviter que l'apparition des boutons ne décale le reste
       crossAxisAlignment: CrossAxisAlignment.end, 
       children: [
         // Les boutons Historique (Undo et Reset) intelligents
@@ -55,112 +55,116 @@ class BoutonsActionDevis extends StatelessWidget {
                 return ValueListenableBuilder<int>(
                   valueListenable: historiqueLengthNotifier,
                   builder: (context, historyLength, _) {
-                    return ValueListenableBuilder<int>( // NOUVEAU : Écoute de l'historique Redo
+                    return ValueListenableBuilder<int>( 
                       valueListenable: historiqueRedoLengthNotifier,
                       builder: (context, historyRedoLength, _) {
                         return ValueListenableBuilder<LigneGoulotte?>(
                           valueListenable: goulotteNotifier,
                           builder: (context, goulotteActuelle, _) {
                             
-                            // 1. Est-ce que les boutons ont une raison d'être affichés ?
-                            bool showHistoriqueEquipement = !isDrawGoulotteMode && historyLength > 1;
-                            bool showResetGoulotte = isDrawGoulotteMode && 
-                                                     goulotteActuelle != null && 
-                                                     goulotteInitiale != null && 
-                                                     goulotteActuelle != goulotteInitiale;
+                            // 1. Détermination de l'état "Actif/Inactif" pour chaque bouton
+                            bool isUndoActive = (!isDrawGoulotteMode && historyLength > 1) || 
+                                                (isDrawGoulotteMode && goulotteActuelle != null && goulotteInitiale != null && goulotteActuelle != goulotteInitiale);
+                                                
+                            // Le redo fonctionne de la même manière pour les 2 modes grâce à sa variable de longueur
+                            bool isRedoActive = historyRedoLength > 0; 
+                            
+                            // Le reset global de l'équipement apparaît s'il y a un passé ou un futur d'enregistré
+                            bool showResetEquipement = !isDrawGoulotteMode && (historyLength > 1 || historyRedoLength > 0);
 
-                            bool showRedoEquipement = !isDrawGoulotteMode && historyRedoLength > 0;
-                            bool showRedoGoulotte = isDrawGoulotteMode && historyRedoLength > 0;
-
-                            // Si on n'a rien bougé, on ne montre pas le bloc d'historique
-                            if (!showHistoriqueEquipement && !showResetGoulotte && !showRedoEquipement && !showRedoGoulotte) {
+                            // Si on n'a strictement rien bougé (position initiale), on cache le bloc d'historique entier
+                            if (!isUndoActive && !isRedoActive && !showResetEquipement) {
                               return const SizedBox.shrink();
                             }
 
-                            // 2. Est-ce que le bouton doit être désactivé (grisé) ?
-                            bool isDisabled = isProcessing || isDraggingEquipement || isDraggingGoulotte;
+                            // 2. Vérification des actions en cours (Désactive tout temporairement pendant le calcul)
+                            bool isGlobalDisabled = isProcessing || isDraggingEquipement || isDraggingGoulotte;
+
+                            // CORRECTION : On ne cache plus les boutons, on les grise (disabled) s'ils sont inactifs !
+                            // Cela empêche l'un de prendre la place de l'autre visuellement.
+                            bool disableUndo = isGlobalDisabled || !isUndoActive;
+                            bool disableRedo = isGlobalDisabled || !isRedoActive;
+                            bool disableReset = isGlobalDisabled || historyLength <= 1; // Grisé si on est déjà au point de départ
 
                             return Column(
                               crossAxisAlignment: CrossAxisAlignment.end, // Aligné à droite
                               children: [
                                 // LIGNE UNDO / REDO
-                                Padding(
-                                  padding: const EdgeInsets.only(bottom: 12.0),
-                                  child: Row(
-                                    mainAxisSize: MainAxisSize.min, // La Row prend juste la taille nécessaire
-                                    children: [
-                                      // BOUTON UNDO (Annuler)
-                                      if (showHistoriqueEquipement || showResetGoulotte)
+                                // Affiche TOUJOURS les 2 boutons espacés fixement s'il y a au moins 1 action possible
+                                if (isUndoActive || isRedoActive)
+                                  Padding(
+                                    padding: const EdgeInsets.only(bottom: 12.0),
+                                    child: Row(
+                                      mainAxisSize: MainAxisSize.min, // La Row prend juste la taille nécessaire
+                                      children: [
+                                        // BOUTON UNDO (Annuler)
                                         Container(
                                           decoration: BoxDecoration(
                                             shape: BoxShape.circle,
-                                            boxShadow: [if (!isDisabled) BoxShadow(color: theme.shadowColor.withValues(alpha: 0.15), blurRadius: 10, offset: const Offset(0, 4))],
+                                            boxShadow: [if (!disableUndo) BoxShadow(color: theme.shadowColor.withValues(alpha: 0.15), blurRadius: 10, offset: const Offset(0, 4))],
                                           ),
                                           child: ClipOval(
                                             child: BackdropFilter(
                                               filter: ImageFilter.blur(sigmaX: 8, sigmaY: 8),
                                               child: Container(
-                                                color: theme.cardColor.withValues(alpha: isDisabled ? 0.4 : 0.85), // S'adapte au mode sombre
+                                                color: theme.cardColor.withValues(alpha: disableUndo ? 0.4 : 0.85), // S'adapte au mode sombre et se grise si inactif
                                                 child: IconButton(
                                                   icon: const Icon(Icons.undo), 
-                                                  color: isDisabled ? theme.disabledColor : theme.colorScheme.primary, // Grise l'icône si inactif
-                                                  tooltip: isDrawGoulotteMode ? 'Réinitialiser la goulotte' : 'Annuler le dernier déplacement',
-                                                  onPressed: isDisabled ? null : onUndo, // Désactive l'action
+                                                  color: disableUndo ? theme.disabledColor : theme.colorScheme.primary, 
+                                                  tooltip: isDrawGoulotteMode ? 'Annuler la goulotte' : 'Annuler le déplacement',
+                                                  onPressed: disableUndo ? null : onUndo, // Désactive l'action au clic
                                                 ),
                                               ),
                                             ),
                                           ),
                                         ),
 
-                                      // NOUVEAU : BOUTON REDO (Rétablir)
-                                      if (showRedoEquipement || showRedoGoulotte) ...[
-                                        if (showHistoriqueEquipement || showResetGoulotte) const SizedBox(width: 8), // Espace entre les deux
+                                        const SizedBox(width: 8), // Espace physique strictement fixe entre les deux boutons
+
+                                        // BOUTON REDO (Rétablir)
                                         Container(
                                           decoration: BoxDecoration(
                                             shape: BoxShape.circle,
-                                            boxShadow: [if (!isDisabled) BoxShadow(color: theme.shadowColor.withValues(alpha: 0.15), blurRadius: 10, offset: const Offset(0, 4))],
+                                            boxShadow: [if (!disableRedo) BoxShadow(color: theme.shadowColor.withValues(alpha: 0.15), blurRadius: 10, offset: const Offset(0, 4))],
                                           ),
                                           child: ClipOval(
                                             child: BackdropFilter(
                                               filter: ImageFilter.blur(sigmaX: 8, sigmaY: 8),
                                               child: Container(
-                                                color: theme.cardColor.withValues(alpha: isDisabled ? 0.4 : 0.85),
+                                                color: theme.cardColor.withValues(alpha: disableRedo ? 0.4 : 0.85),
                                                 child: IconButton(
                                                   icon: const Icon(Icons.redo), 
-                                                  color: isDisabled ? theme.disabledColor : theme.colorScheme.primary,
-                                                  tooltip: isDrawGoulotteMode ? 'Rétablir la goulotte annulée' : 'Rétablir le déplacement annulé',
-                                                  onPressed: isDisabled ? null : onRedo,
+                                                  color: disableRedo ? theme.disabledColor : theme.colorScheme.primary,
+                                                  tooltip: isDrawGoulotteMode ? 'Rétablir la goulotte' : 'Rétablir le déplacement',
+                                                  onPressed: disableRedo ? null : onRedo,
                                                 ),
                                               ),
                                             ),
                                           ),
                                         ),
                                       ],
-                                    ],
+                                    ),
                                   ),
-                                ),
 
                                 // BOUTON RESET (Retour immédiat à la case départ)
-                                // Apparaît uniquement pour l'équipement si on l'a bougé
-                                if (showHistoriqueEquipement)
+                                if (showResetEquipement)
                                   Padding(
                                     padding: const EdgeInsets.only(bottom: 12.0),
                                     child: Container(
                                       decoration: BoxDecoration(
                                         shape: BoxShape.circle,
-                                        boxShadow: [if (!isDisabled) BoxShadow(color: theme.shadowColor.withValues(alpha: 0.15), blurRadius: 10, offset: const Offset(0, 4))],
+                                        boxShadow: [if (!disableReset) BoxShadow(color: theme.shadowColor.withValues(alpha: 0.15), blurRadius: 10, offset: const Offset(0, 4))],
                                       ),
                                       child: ClipOval(
                                         child: BackdropFilter(
                                           filter: ImageFilter.blur(sigmaX: 8, sigmaY: 8),
                                           child: Container(
-                                            color: theme.cardColor.withValues(alpha: isDisabled ? 0.4 : 0.85),
+                                            color: theme.cardColor.withValues(alpha: disableReset ? 0.4 : 0.85),
                                             child: IconButton(
-                                              // CORRECTION : Icône universelle de réinitialisation ("Reset")
                                               icon: const Icon(Icons.restart_alt), 
-                                              color: isDisabled ? theme.disabledColor : theme.colorScheme.secondary, // Utilise la couleur d'accentuation
+                                              color: disableReset ? theme.disabledColor : theme.colorScheme.secondary, 
                                               tooltip: 'Remettre à la position d\'origine',
-                                              onPressed: isDisabled ? null : onResetPosition,
+                                              onPressed: disableReset ? null : onResetPosition,
                                             ),
                                           ),
                                         ),

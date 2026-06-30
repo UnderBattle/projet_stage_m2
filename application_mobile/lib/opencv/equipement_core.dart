@@ -192,7 +192,7 @@ class EquipementCore {
       cv.Scalar colorTop = cv.Scalar(mB, mG, mR, 0);
       cv.Scalar colorBottom = estEquipementNoir 
           ? cv.Scalar(math.min(255.0, mB + 50), math.min(255.0, mG + 50), math.min(255.0, mR + 50), 0) 
-          : cv.Scalar(mB * 0.65, mG * 0.65, mR * 0.65, 0); 
+          : cv.Scalar(mB * 0.67, mG * 0.67, mR * 0.67, 0); 
           
       cv.Scalar colorLeft = estEquipementNoir 
           ? cv.Scalar(math.min(255.0, mB + 35), math.min(255.0, mG + 35), math.min(255.0, mR + 35), 0)
@@ -200,7 +200,7 @@ class EquipementCore {
           
       cv.Scalar colorRight = estEquipementNoir 
           ? cv.Scalar(math.min(255.0, mB + 20), math.min(255.0, mG + 20), math.min(255.0, mR + 20), 0)
-          : cv.Scalar(mB * 0.75, mG * 0.75, mR * 0.75, 0);
+          : cv.Scalar(mB * 0.85, mG * 0.85, mR * 0.85, 0);
 
       double scaleS = 1.0 - baseExtrusion;
       double tx = imgCXPad * baseExtrusion;

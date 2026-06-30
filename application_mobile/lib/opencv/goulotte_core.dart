@@ -156,32 +156,51 @@ class GoulotteCore {
       double shiftXG = normeG < 1.0 ? (3.0 * ratioVolumeGoulotte) : -dirLumiereXG * longueurOmbreGoulotte;
       double shiftYG = normeG < 1.0 ? (8.0 * ratioVolumeGoulotte) : -dirLumiereYG * longueurOmbreGoulotte;
 
-      cv.Mat affineMatDir = cv.getAffineTransform(
-        cv.VecPoint.fromList([cv.Point(0, 0), cv.Point(10, 0), cv.Point(0, 10)]),
-        cv.VecPoint.fromList([
-          cv.Point(shiftXG.toInt(), shiftYG.toInt()), 
-          cv.Point(10 + shiftXG.toInt(), shiftYG.toInt()), 
-          cv.Point(shiftXG.toInt(), 10 + shiftYG.toInt())
-        ]) // Décalage adaptatif de l'ombre
-      );
-      cv.Mat shadowWarped = cv.warpAffine(maskBinaire, affineMatDir, (w, h));
+      var srcPts = cv.VecPoint.fromList([cv.Point(0, 0), cv.Point(10, 0), cv.Point(0, 10)]);
+      
+      // Ombre 1 : Directionnelle (Lumière de la pièce)
+      var dstPtsDir = cv.VecPoint.fromList([
+        cv.Point(shiftXG.toInt(), shiftYG.toInt()), 
+        cv.Point(10 + shiftXG.toInt(), shiftYG.toInt()), 
+        cv.Point(shiftXG.toInt(), 10 + shiftYG.toInt())
+      ]);
+      cv.Mat affineMatDir = cv.getAffineTransform(srcPts, dstPtsDir);
+      cv.Mat alphaOmbreWarped = cv.warpAffine(maskBinaire, affineMatDir, (w, h));
+      
+      // OPTIMISATION : On réduit la taille avant le flou (plus rapide et effet plus doux)
+      cv.Mat smallAlphaDir = cv.resize(alphaOmbreWarped, (w ~/ 4, h ~/ 4));
       
       int baseBlurGoulotte = (5 + (ratioVolumeGoulotte * 4) + ((1.0 - ratioContrasteGoulotte) * 8)).toInt();
-      if (baseBlurGoulotte % 2 == 0) baseBlurGoulotte += 1;
+      if (baseBlurGoulotte % 2 == 0) baseBlurGoulotte += 1; 
       
-      cv.Mat shadowBlurred = cv.gaussianBlur(shadowWarped, (baseBlurGoulotte, baseBlurGoulotte), 0.0);
+      cv.Mat smallOmbreFloueDir = cv.gaussianBlur(smallAlphaDir, (baseBlurGoulotte, baseBlurGoulotte), 0.0);
+      cv.Mat ombreFloueDirectionnelle = cv.resize(smallOmbreFloueDir, (w, h), interpolation: cv.INTER_CUBIC);
+
+      // Ombre 2 : Contact (Ambient Occlusion, ligne sombre juste sous la goulotte)
+      var dstPtsContact = cv.VecPoint.fromList([cv.Point(0, 2), cv.Point(10, 2), cv.Point(0, 12)]);
+      cv.Mat affineMatContact = cv.getAffineTransform(srcPts, dstPtsContact);
+      cv.Mat alphaContactWarped = cv.warpAffine(maskBinaire, affineMatContact, (w, h));
       
-      // Assombrissement progressif de l'image de fond
-      double opaciteOmbre = 0.35 * ratioContrasteGoulotte;
-      cv.Mat ombre8u = shadowBlurred.convertTo(cv.MatType.CV_8UC1, alpha: opaciteOmbre); // Opacité de l'ombre adaptative
-      cv.Mat invOmbre8u = cv.bitwiseNOT(ombre8u);
+      cv.Mat smallContact = cv.resize(alphaContactWarped, (w ~/ 4, h ~/ 4));
+      cv.Mat smallContactFlou = cv.gaussianBlur(smallContact, (3, 3), 0.0);
+      cv.Mat ombreFloueContact = cv.resize(smallContactFlou, (w, h), interpolation: cv.INTER_CUBIC);
+
+      // Mix des deux ombres
+      double opaciteOmbreDir = 0.25 * ratioContrasteGoulotte; 
+      double opaciteOmbreContact = 0.15 * ratioContrasteGoulotte;
+
+      cv.Mat ombreDir8u = ombreFloueDirectionnelle.convertTo(cv.MatType.CV_8UC1, alpha: opaciteOmbreDir); 
+      cv.Mat ombreContact8u = ombreFloueContact.convertTo(cv.MatType.CV_8UC1, alpha: opaciteOmbreContact);
+      
+      cv.Mat ombreTotale8u = cv.add(ombreDir8u, ombreContact8u);
+      
+      cv.Mat invOmbre8u = cv.bitwiseNOT(ombreTotale8u);
       cv.Mat invOmbre3c = cv.cvtColor(invOmbre8u, cv.COLOR_GRAY2BGR);
       
       // OPTIMISATION RAM : Application directe de l'ombre sans matrice 32F via l'argument scale
       cv.Mat murOmbre = cv.multiply(fondMat, invOmbre3c, scale: 1.0 / 255.0);
 
       // 4. Teinte et Lumière dynamiques (Même traitement que pour l'équipement)
-      // CORRECTION MAJEURE : On utilise 'fondMat' (le mur vierge) et non 'murOmbre' !
       // Si on utilise 'murOmbre', la goulotte analyse sa PROPRE ombre et s'assombrit elle-même.
       cv.Mat murUltraSmall = cv.resize(fondMat, (w ~/ 32, h ~/ 32), interpolation: cv.INTER_AREA);
       cv.Mat murUltraFlou = cv.gaussianBlur(murUltraSmall, (15, 15), 0.0);
