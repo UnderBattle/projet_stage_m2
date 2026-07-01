@@ -31,7 +31,7 @@ class _EcranResultatState extends State<EcranResultat> {
   // === VARIABLES D'ÉTAT ===
   // =========================================================================
   
-  // NOUVEAU : On ne force plus la catégorie "Climatisations", on prend dynamiquement la 1ère dispo
+  // On ne force plus la catégorie "Climatisations", on prend dynamiquement la 1ère dispo
   late String _categorieSelectionnee;
   Equipement? _modeleSelectionne;
   
@@ -48,7 +48,7 @@ class _EcranResultatState extends State<EcranResultat> {
   Uint8List? _imageFondAvecGoulotteBytes; 
   Uint8List? _calqueEquipementPngBytes; // Le calque de l'équipement transparent (PNG)
   
-  // NOUVEAU: Mémorise le dernier rendu complet (non rogné) pour le drag hors de l'écran
+  // Mémorise le dernier rendu complet (non rogné) pour le drag hors de l'écran
   Uint8List? _dernierCalqueEquipementCompletBytes;
   Offset _decalageDuCalqueComplet = Offset.zero;
 
@@ -57,7 +57,7 @@ class _EcranResultatState extends State<EcranResultat> {
   List<Map<String, double>>? _pointsCibles;
   bool _isManualPlacementMode = false;
   
-  // NOUVEAU : Gère l'affichage de la carte de confirmation en bas de l'écran
+  // Gère l'affichage de la carte de confirmation en bas de l'écran
   bool _attenteConfirmationIA = false;
 
   // Contrôleur pour gérer programmatiquement le zoom et le déplacement de l'image
@@ -72,18 +72,17 @@ class _EcranResultatState extends State<EcranResultat> {
 
   // Pile d'historique pour annuler les déplacements successifs de l'équipement
   final List<Offset> _historiqueDecalages = [Offset.zero];
-  // NOUVEAU : Pile d'historique pour Rétablir (Redo)
+  // Pile d'historique pour Rétablir (Redo)
   final List<Offset> _historiqueRedoDecalages = [];
-  
-  // OPTIMISATION : Notifier ultra-léger pour dire au bouton Undo de s'afficher SANS recalculer à chaque frame du glissement
+
   final ValueNotifier<int> _historiqueLengthNotifier = ValueNotifier(1);
-  final ValueNotifier<int> _historiqueRedoLengthNotifier = ValueNotifier(0); // NOUVEAU
+  final ValueNotifier<int> _historiqueRedoLengthNotifier = ValueNotifier(0);
 
   // Variables d'état pour la Goulotte interactive
   bool _isDrawGoulotteMode = false;
   final ValueNotifier<LigneGoulotte?> _goulotteNotifier = ValueNotifier(null);
   LigneGoulotte? _goulotteInitiale; // Mémoire de la position de départ de la goulotte pour le bouton Undo
-  LigneGoulotte? _goulotteRedo; // NOUVEAU : Mémoire pour rétablir une goulotte annulée
+  LigneGoulotte? _goulotteRedo; // Mémoire pour rétablir une goulotte annulée
   
   final ValueNotifier<bool> _isDraggingGoulotteNotifier = ValueNotifier(false);
 
@@ -109,17 +108,14 @@ class _EcranResultatState extends State<EcranResultat> {
     _analyserImage();
   }
 
-  // CORRECTION : L'optimisation du pré-chargement en RAM (didChangeDependencies) 
-  // a été totalement déléguée au Splash Screen ! Code nettoyé et allégé.
-
   @override
   void dispose() {
     _transformationController.dispose();
     _decalageNotifier.dispose();
     _splitNotifier.dispose();
     _isDraggingEquipementNotifier.dispose();
-    _historiqueLengthNotifier.dispose(); // OPTIMISATION: Nettoyage
-    _historiqueRedoLengthNotifier.dispose(); // NOUVEAU
+    _historiqueLengthNotifier.dispose();
+    _historiqueRedoLengthNotifier.dispose();
     _goulotteNotifier.dispose();
     _isDraggingGoulotteNotifier.dispose();
     _goulotteCurrentEndOrigNotifier.dispose();
@@ -250,7 +246,7 @@ class _EcranResultatState extends State<EcranResultat> {
 
         print("[IA] Confiance moyenne des points : $confMoyennePoints");
 
-        if (confMoyennePoints >= 0.9875) {
+        if (confMoyennePoints >= 0.9775) {
           _pointsCibles = TraitementImage.trierPoints(rawPoints);
         } else {
           double xMin = (boxX * scale) - (boxW * scale) / 2;
@@ -435,7 +431,7 @@ class _EcranResultatState extends State<EcranResultat> {
           'largeurMm': largeur,
         });
 
-        // --- NOUVEAU : SAUVEGARDE DU DERNIER RENDU COMPLET (NON ROGNÉ) ---
+        // --- SAUVEGARDE DU DERNIER RENDU COMPLET ---
         // On calcule la taille et la position de la clim pour vérifier si elle sort de l'écran
         double equipementWPxOrig = (largeur / 50.0) * autoWPxOrig;
         double equipementHPxOrig = equipementWPxOrig * (hauteur / largeur);
@@ -492,28 +488,28 @@ class _EcranResultatState extends State<EcranResultat> {
     if (_isDrawGoulotteMode) {
       // Mode Goulotte : On annule le mouvement et on revient à la ligne d'origine
       if (_goulotteNotifier.value != null && _goulotteInitiale != null) {
-        _goulotteRedo = _goulotteNotifier.value; // NOUVEAU : Sauvegarde pour le Redo
-        _historiqueRedoLengthNotifier.value = 1; // NOUVEAU
+        _goulotteRedo = _goulotteNotifier.value;
+        _historiqueRedoLengthNotifier.value = 1;
         
         _goulotteNotifier.value = _goulotteInitiale;
         _genererIncrustation(recomputeGoulotte: true, recomputeEquipement: false);
       }
     } else {
-      // CORRECTION : Mode Equipement -> On dépile le dernier élément pour faire un Undo étape par étape
+      // Mode Equipement -> On dépile le dernier élément pour faire un Undo étape par étape
       if (_historiqueDecalages.length > 1) {
         Offset currentPos = _historiqueDecalages.removeLast(); // Retire la position courante
-        _historiqueRedoDecalages.add(currentPos); // NOUVEAU : Sauvegarde pour le Redo
+        _historiqueRedoDecalages.add(currentPos);
         
         _decalageNotifier.value = _historiqueDecalages.last; // Applique la précédente
-        _historiqueLengthNotifier.value = _historiqueDecalages.length; // OPTIMISATION : Déclenche la MAJ UI de manière ciblée
-        _historiqueRedoLengthNotifier.value = _historiqueRedoDecalages.length; // NOUVEAU
+        _historiqueLengthNotifier.value = _historiqueDecalages.length; // Déclenche la MAJ UI de manière ciblée
+        _historiqueRedoLengthNotifier.value = _historiqueRedoDecalages.length;
         
         _genererIncrustation(recomputeGoulotte: false, recomputeEquipement: true);
       }
     }
   }
 
-  // NOUVEAU : Méthode pour Rétablir (Redo)
+  // Méthode pour Rétablir (Redo)
   void _retablirPosition() {
     if (_isProcessing) return;
 
@@ -538,7 +534,7 @@ class _EcranResultatState extends State<EcranResultat> {
     }
   }
 
-  // NOUVEAU : Méthode pour tout remettre à zéro (Position initiale calculée par l'IA)
+  // Méthode pour tout remettre à zéro (Position initiale calculée par l'IA)
   void _resetPositionEquipement() {
     if (_isProcessing) return;
 
@@ -548,7 +544,7 @@ class _EcranResultatState extends State<EcranResultat> {
       _historiqueDecalages.add(Offset.zero);
       _historiqueLengthNotifier.value = 1; // Cache les boutons undo/reset
       
-      _historiqueRedoDecalages.clear(); // NOUVEAU : On vide aussi le redo
+      _historiqueRedoDecalages.clear(); // Méthode pour tout remettre à zéro (Position initiale calculée par l'IA)
       _historiqueRedoLengthNotifier.value = 0;
     });
 
@@ -624,8 +620,6 @@ class _EcranResultatState extends State<EcranResultat> {
     }
   }
 
-  /// CORRECTION MAJEURE : COMPORTEMENT "RECTANGLE CLASSIQUE PAINT"
-  /// Tirer un coin modifie automatiquement ses voisins pour garder les angles à 90° !
   void _redimensionnerRectangleManuel(int idx, double newX, double newY) {
     if (idx == 0) { // Haut-Gauche
       if (newX >= _pointsCibles![1]['x']! - 10) newX = _pointsCibles![1]['x']! - 10;
@@ -789,7 +783,7 @@ class _EcranResultatState extends State<EcranResultat> {
                       height: visualNodeSize, 
                       decoration: BoxDecoration(
                         color: Colors.blueAccent.withValues(alpha: 0.6), // FORCE LE BLEU
-                        shape: BoxShape.rectangle, // CORRECTION : LOOK CARRE CLASSIQUE DE PAINT !
+                        shape: BoxShape.rectangle,
                         border: Border.all(color: Colors.blueAccent, width: 2.0 * invZoom), 
                       ),
                     ),
@@ -827,10 +821,7 @@ class _EcranResultatState extends State<EcranResultat> {
             },
             onPanUpdate: (details) {
               if (_activePointers > 1 || !_isDraggingGoulotteNotifier.value) return;
-              
-              // CORRECTION DU BUG DE ROTATION : 
-              // Transform.rotate altère le repère local du GestureDetector.
-              // On ré-oriente le "delta" pour retrouver les vraies coordonnées globales de l'écran.
+
               double cosA = math.cos(angle);
               double sinA = math.sin(angle);
               double globalDx = details.delta.dx * cosA - details.delta.dy * sinA;
@@ -863,7 +854,6 @@ class _EcranResultatState extends State<EcranResultat> {
             onPanEnd: (_) {
               if (!_isDraggingGoulotteNotifier.value) return;
               _isDraggingGoulotteNotifier.value = false;
-              // NOUVEAU : On efface le redo de la goulotte
               _goulotteRedo = null;
               _historiqueRedoLengthNotifier.value = 0;
               
@@ -914,7 +904,6 @@ class _EcranResultatState extends State<EcranResultat> {
             _magnifierPositionNotifier.value = null; // Cache la loupe
             if (!_isDraggingGoulotteNotifier.value) return;
             _isDraggingGoulotteNotifier.value = false;
-            // NOUVEAU : On efface le redo de la goulotte
             _goulotteRedo = null;
             _historiqueRedoLengthNotifier.value = 0;
             
@@ -964,7 +953,6 @@ class _EcranResultatState extends State<EcranResultat> {
             _magnifierPositionNotifier.value = null; // Cache la loupe
             if (!_isDraggingGoulotteNotifier.value) return;
             _isDraggingGoulotteNotifier.value = false;
-            // NOUVEAU : On efface le redo de la goulotte
             _goulotteRedo = null;
             _historiqueRedoLengthNotifier.value = 0;
             
@@ -1075,7 +1063,7 @@ class _EcranResultatState extends State<EcranResultat> {
           ),
 
         // =========================================================================
-        // === CORRECTION : AFFICHE L'ÉQUIPEMENT RENDU LORS DU DRAG DE LA GOULOTTE =
+        // === AFFICHE L'ÉQUIPEMENT RENDU LORS DU DRAG DE LA GOULOTTE              =
         // =========================================================================
         if (_calqueEquipementPngBytes != null)
           ValueListenableBuilder<bool>(
@@ -1103,9 +1091,6 @@ class _EcranResultatState extends State<EcranResultat> {
                     return ValueListenableBuilder<bool>(
                       valueListenable: _isDraggingGoulotteNotifier, // Etat du drag goulotte
                       builder: (context, isDraggingGoulotte, _) {
-                        
-                        // CORRECTION : On n'affiche le trait vectoriel QUE lorsqu'on déplace la goulotte !
-                        // Sinon (si on déplace la clim), on verra la magnifique goulotte rendue par OpenCV en fond.
                         bool showLine = isDraggingGoulotte;
                         // On affiche les ronds bleus (nœuds) uniquement si l'outil pinceau est activé
                         bool showNodes = _isDrawGoulotteMode;
@@ -1211,7 +1196,7 @@ class _EcranResultatState extends State<EcranResultat> {
 
                   return Stack(
                     children: [
-                      // NOUVEAU : Rendu complet 3D en mouvement au lieu du PNG plat !
+                      // Rendu complet 3D en mouvement
                       if (isDraggingEquipement && dragImage != null)
                         Positioned.fill(
                           child: IgnorePointer(
@@ -1257,12 +1242,12 @@ class _EcranResultatState extends State<EcranResultat> {
                                if (!_isDraggingEquipementNotifier.value) return;
                                _isDraggingEquipementNotifier.value = false;
 
-                               // CORRECTION : Enregistrement de la nouvelle coordonnée validée dans la pile d'historique
+                               // Enregistrement de la nouvelle coordonnée validée dans la pile d'historique
                                if (_historiqueDecalages.isEmpty || _historiqueDecalages.last != _decalageNotifier.value) {
                                  _historiqueDecalages.add(_decalageNotifier.value);
                                  _historiqueLengthNotifier.value = _historiqueDecalages.length; // OPTIMISATION : Demande la MAJ du bouton Undo
                                  
-                                 // NOUVEAU : Une nouvelle action vide l'historique "Redo"
+                                 // Une nouvelle action vide l'historique "Redo"
                                  _historiqueRedoDecalages.clear();
                                  _historiqueRedoLengthNotifier.value = 0;
                                }
@@ -1278,8 +1263,6 @@ class _EcranResultatState extends State<EcranResultat> {
                             child: Transform.rotate(
                               angle: angleRad,
                               alignment: Alignment.topLeft, 
-                              // CORRECTION : Le PNG brut plat est maintenant à 0.0 en permanence.
-                              // Il sert juste de "boîte de collision" pour les gestes tactiles !
                               child: Opacity(
                                 opacity: 0.0, 
                                 child: Image.asset(_modeleSelectionne!.chemin, fit: BoxFit.fill),
@@ -1348,7 +1331,7 @@ class _EcranResultatState extends State<EcranResultat> {
                         _goulotteInitiale = newGoulotte; 
                         _goulotteNotifier.value = newGoulotte;
                         
-                        // NOUVEAU : On vide le redo
+                        // Une nouvelle action vide l'historique "Redo"
                         _goulotteRedo = null;
                         _historiqueRedoLengthNotifier.value = 0;
                         
@@ -1530,7 +1513,7 @@ class _EcranResultatState extends State<EcranResultat> {
   // =========================================================================
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context); // NOUVEAU : Récupération du thème actif
+    final theme = Theme.of(context); // Récupération du thème actif
 
     return Scaffold(
       appBar: AppBar(
@@ -1627,13 +1610,13 @@ class _EcranResultatState extends State<EcranResultat> {
                           isDraggingEquipementNotifier: _isDraggingEquipementNotifier,
                           isDraggingGoulotteNotifier: _isDraggingGoulotteNotifier,
                           historiqueLengthNotifier: _historiqueLengthNotifier,
-                          historiqueRedoLengthNotifier: _historiqueRedoLengthNotifier, // NOUVEAU
+                          historiqueRedoLengthNotifier: _historiqueRedoLengthNotifier,
                           goulotteNotifier: _goulotteNotifier,
                           goulotteInitiale: _goulotteInitiale,
                           isDrawGoulotteMode: _isDrawGoulotteMode,
                           isProcessing: _isProcessing,
                           onUndo: _reinitialiserPosition,
-                          onRedo: _retablirPosition, // NOUVEAU
+                          onRedo: _retablirPosition,
                           onResetPosition: _resetPositionEquipement,
                           onToggleGoulotteMode: () {
                             setState(() {
@@ -1644,8 +1627,8 @@ class _EcranResultatState extends State<EcranResultat> {
                           onDeleteConfirmed: () {
                             _goulotteNotifier.value = null; // Vide la goulotte unique
                             _goulotteInitiale = null; // On vide aussi l'historique
-                            _goulotteRedo = null; // NOUVEAU
-                            _historiqueRedoLengthNotifier.value = 0; // NOUVEAU
+                            _goulotteRedo = null; 
+                            _historiqueRedoLengthNotifier.value = 0;
                             
                             // On force le recalcul uniquement de la goulotte (qui disparaît)
                             _genererIncrustation(recomputeGoulotte: true, recomputeEquipement: false); 
@@ -1683,15 +1666,10 @@ class _EcranResultatState extends State<EcranResultat> {
                 onModeleSelected: (equipement) {
                   setState(() {
                     _modeleSelectionne = equipement;
-                    
-                    // NOUVEAU COMPORTEMENT : On ne reset plus la position !
-                    // La nouvelle clim apparaîtra exactement là où on avait glissé l'ancienne.
-                    // On vide juste le cache des calques pour obliger OpenCV à recalculer le PNG
                     _calqueEquipementPngBytes = null;
                     _dernierCalqueEquipementCompletBytes = null;
-                    
-                    _historiqueRedoDecalages.clear(); // NOUVEAU
-                    _historiqueRedoLengthNotifier.value = 0; // NOUVEAU
+                    _historiqueRedoDecalages.clear();
+                    _historiqueRedoLengthNotifier.value = 0;
 
                     // En cas de changement de modèle, on ne recalcule QUE l'équipement !
                     _genererIncrustation(recomputeGoulotte: false, recomputeEquipement: true);
@@ -1703,8 +1681,7 @@ class _EcranResultatState extends State<EcranResultat> {
           ],
         ),
       ),
-      
-      // REFACTORING : Les 3 boutons d'actions conditionnels sont déportés dans une méthode propre
+
       floatingActionButton: _buildPanneauActionBasse(theme),
       floatingActionButtonLocation: FloatingActionButtonLocation.centerFloat,
     );

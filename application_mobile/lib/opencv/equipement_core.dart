@@ -87,7 +87,7 @@ class EquipementCore {
       double centreX = ptHg.x + (uxBase + vxBase) / 2.0;
       double centreY = ptHg.y + (uyBase + vyBase) / 2.0;
 
-      // NOUVEAU : Effet d'avancée optique (Zoom depuis le centre)
+      // Effet d'avancée optique (Zoom depuis le centre)
       double effetZoomProfondeur = 1.0 + (profondeurMm / 1000.0) * 0.60; 
 
       double largeurPxZoom = largeurPx * effetZoomProfondeur;
@@ -98,7 +98,7 @@ class EquipementCore {
       double vxZoom = -hauteurPxZoom * math.sin(angleRad);
       double vyZoom = hauteurPxZoom * math.cos(angleRad);
 
-      // CORRECTION DU DÉCALAGE : Décalage correctif vers la gauche
+      // Décalage correctif vers la gauche
       double ratioDecalageGauche = 0.50;
       double compensationMurX = -(uxBase * ratioDecalageGauche);
       double compensationMurY = -(uyBase * ratioDecalageGauche);
