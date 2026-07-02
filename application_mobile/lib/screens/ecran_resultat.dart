@@ -74,7 +74,8 @@ class _EcranResultatState extends State<EcranResultat> {
   final List<Offset> _historiqueDecalages = [Offset.zero];
   // Pile d'historique pour Rétablir (Redo)
   final List<Offset> _historiqueRedoDecalages = [];
-
+  
+  // Notifier ultra-léger pour dire au bouton Undo de s'afficher SANS recalculer à chaque frame du glissement
   final ValueNotifier<int> _historiqueLengthNotifier = ValueNotifier(1);
   final ValueNotifier<int> _historiqueRedoLengthNotifier = ValueNotifier(0);
 
@@ -328,7 +329,7 @@ class _EcranResultatState extends State<EcranResultat> {
   void _activerModeManuel() {
     setState(() {
       _isManualPlacementMode = true;
-      _attenteConfirmationIA = false; // On n'a pas besoin de confirmer l'IA puisqu'elle a échoué
+      _attenteConfirmationIA = false;
       _pointsCibles = [
         {'x': 512.0 - 75.0, 'y': 512.0 - 150.0}, // Haut Gauche
         {'x': 512.0 + 75.0, 'y': 512.0 - 150.0}, // Haut Droit
@@ -368,7 +369,6 @@ class _EcranResultatState extends State<EcranResultat> {
     });
   }
 
-  // NOUVELLE ARCHITECTURE : On choisit ce qu'on recalcule !
   Future<void> _genererIncrustation({bool recomputeGoulotte = false, bool recomputeEquipement = false}) async {
     if (_pointsCibles == null || _modeleSelectionne == null || _imageFondPropreBytes == null) return;
     
@@ -420,7 +420,7 @@ class _EcranResultatState extends State<EcranResultat> {
         setState(() => _loadingMessage = "Calcul des ombres de l'équipement...");
         
         _calqueEquipementPngBytes = await TraitementImage.genererCalqueEquipementWorker({
-          'fondPropreBytes': _imageFondPropreBytes!, // Toujours calculée d'après le mur propre !
+          'fondPropreBytes': _imageFondPropreBytes!,
           'equipementBytes': equipementBytes,
           'pointsIA': _pointsCibles!,
           'decalageX': _decalageNotifier.value.dx,
@@ -431,7 +431,7 @@ class _EcranResultatState extends State<EcranResultat> {
           'largeurMm': largeur,
         });
 
-        // --- SAUVEGARDE DU DERNIER RENDU COMPLET ---
+        // --- SAUVEGARDE DU DERNIER RENDU COMPLET (NON ROGNÉ) ---
         // On calcule la taille et la position de la clim pour vérifier si elle sort de l'écran
         double equipementWPxOrig = (largeur / 50.0) * autoWPxOrig;
         double equipementHPxOrig = equipementWPxOrig * (hauteur / largeur);
@@ -544,7 +544,7 @@ class _EcranResultatState extends State<EcranResultat> {
       _historiqueDecalages.add(Offset.zero);
       _historiqueLengthNotifier.value = 1; // Cache les boutons undo/reset
       
-      _historiqueRedoDecalages.clear(); // Méthode pour tout remettre à zéro (Position initiale calculée par l'IA)
+      _historiqueRedoDecalages.clear();
       _historiqueRedoLengthNotifier.value = 0;
     });
 
@@ -694,7 +694,7 @@ class _EcranResultatState extends State<EcranResultat> {
               child: CustomPaint(
                 painter: BoundingBoxPainter(
                   points: screenPoints, 
-                  primaryColor: Colors.blueAccent, // FORCE LE BLEU (Meilleur contraste)
+                  primaryColor: theme.colorScheme.secondary,
                   zoomScale: currentZoom, // On passe le zoom !
                 )
               )
@@ -782,9 +782,9 @@ class _EcranResultatState extends State<EcranResultat> {
                       width: visualNodeSize, // Le carré est plus gros 
                       height: visualNodeSize, 
                       decoration: BoxDecoration(
-                        color: Colors.blueAccent.withValues(alpha: 0.6), // FORCE LE BLEU
+                        color: theme.colorScheme.secondary.withValues(alpha: 0.6),
                         shape: BoxShape.rectangle,
-                        border: Border.all(color: Colors.blueAccent, width: 2.0 * invZoom), 
+                        border: Border.all(color: theme.colorScheme.secondary, width: 2.0 * invZoom),
                       ),
                     ),
                   ),
@@ -1091,6 +1091,9 @@ class _EcranResultatState extends State<EcranResultat> {
                     return ValueListenableBuilder<bool>(
                       valueListenable: _isDraggingGoulotteNotifier, // Etat du drag goulotte
                       builder: (context, isDraggingGoulotte, _) {
+                        
+                        // On n'affiche le trait vectoriel QUE lorsqu'on déplace la goulotte
+                        // Sinon (si on déplace la clim), on verra la magnifique goulotte rendue par OpenCV en fond.
                         bool showLine = isDraggingGoulotte;
                         // On affiche les ronds bleus (nœuds) uniquement si l'outil pinceau est activé
                         bool showNodes = _isDrawGoulotteMode;
@@ -1463,7 +1466,7 @@ class _EcranResultatState extends State<EcranResultat> {
                         _alignerZoneSelectionSurRectangle(); // COMPORTEMENT RECTANGLE CLASSIQUE
                       });
                     },
-                    child: Text("Ajuster", style: TextStyle(color: theme.colorScheme.onSurface.withValues(alpha: 0.6))),
+                    child: Text("Ajuster", style: TextStyle(color: theme.colorScheme.secondary)),
                   ),
                   ElevatedButton.icon(
                     icon: const Icon(Icons.check, size: 18),
@@ -1496,6 +1499,8 @@ class _EcranResultatState extends State<EcranResultat> {
         onPressed: _validerPlacementManuel,
         label: const Text("Valider la position", style: TextStyle(fontWeight: FontWeight.bold)),
         icon: const Icon(Icons.check),
+        backgroundColor: theme.colorScheme.secondary,
+        foregroundColor: Colors.white,
       );
     } else if (_imageResultatBytes != null && !_isProcessing) {
       // 3. BOUTON DE SAUVEGARDE FINALE
@@ -1503,6 +1508,8 @@ class _EcranResultatState extends State<EcranResultat> {
         onPressed: _sauvegarderImage,
         label: const Text("Sauvegarder", style: TextStyle(fontWeight: FontWeight.bold)),
         icon: const Icon(Icons.download),
+        backgroundColor: theme.colorScheme.secondary,
+        foregroundColor: Colors.white,
       );
     }
     return null;
@@ -1513,7 +1520,7 @@ class _EcranResultatState extends State<EcranResultat> {
   // =========================================================================
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context); // Récupération du thème actif
+    final theme = Theme.of(context);
 
     return Scaffold(
       appBar: AppBar(
@@ -1610,13 +1617,13 @@ class _EcranResultatState extends State<EcranResultat> {
                           isDraggingEquipementNotifier: _isDraggingEquipementNotifier,
                           isDraggingGoulotteNotifier: _isDraggingGoulotteNotifier,
                           historiqueLengthNotifier: _historiqueLengthNotifier,
-                          historiqueRedoLengthNotifier: _historiqueRedoLengthNotifier,
+                          historiqueRedoLengthNotifier: _historiqueRedoLengthNotifier, // NOUVEAU
                           goulotteNotifier: _goulotteNotifier,
                           goulotteInitiale: _goulotteInitiale,
                           isDrawGoulotteMode: _isDrawGoulotteMode,
                           isProcessing: _isProcessing,
                           onUndo: _reinitialiserPosition,
-                          onRedo: _retablirPosition,
+                          onRedo: _retablirPosition, // NOUVEAU
                           onResetPosition: _resetPositionEquipement,
                           onToggleGoulotteMode: () {
                             setState(() {
@@ -1627,7 +1634,7 @@ class _EcranResultatState extends State<EcranResultat> {
                           onDeleteConfirmed: () {
                             _goulotteNotifier.value = null; // Vide la goulotte unique
                             _goulotteInitiale = null; // On vide aussi l'historique
-                            _goulotteRedo = null; 
+                            _goulotteRedo = null;
                             _historiqueRedoLengthNotifier.value = 0;
                             
                             // On force le recalcul uniquement de la goulotte (qui disparaît)
@@ -1645,7 +1652,7 @@ class _EcranResultatState extends State<EcranResultat> {
                             valueListenable: _isDraggingEquipementNotifier,
                             builder: (context, isDragging, _) {
                                if (isDragging) return const SizedBox.shrink(); 
-                               return _buildEcranChargementFloute(); // REFACTORING : Méthode extraite
+                               return _buildEcranChargementFloute();
                             }
                           ),
                         ),

@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'screens/ecran_splash.dart'; // NOUVEAU : Import du Splash Screen
+import 'screens/ecran_splash.dart';
 import 'utils/image_utils.dart';
 import 'theme/app_theme.dart';
 
@@ -7,9 +7,6 @@ import 'theme/app_theme.dart';
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   nettoyerCacheImages();
-
-  // CORRECTION : L'initialisation des caméras a été déplacée dans l'EcranSplash 
-  // pour que l'application s'ouvre instantanément !
   runApp(const MonApplication());
 }
 

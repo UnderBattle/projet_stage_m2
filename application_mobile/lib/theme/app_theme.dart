@@ -1,16 +1,13 @@
 import 'package:flutter/material.dart';
 
 class AppTheme {
-  // =========================================================================
-  // === COULEURS DE LA MARQUE (Chauffage Der Energies) ===
-  // =========================================================================
-  static const Color primaryColor = Color(0xFF00796B); // Teal profond
-  static const Color primaryLight = Color(0xFF48A999);
-  static const Color primaryDark = Color(0xFF004C40);
-  static const Color accentColor = Color(0xFF00BFA5); // Utilisé pour le Dark Mode
+  static const Color primaryColor = Color(0xFFFF7A45); // Orange vif mais doux (Chauffage)
+  static const Color primaryLight = Color(0xFFFFAB91); // Orange très clair
+  static const Color primaryDark = Color(0xFFE64A19);  // Orange soutenu (Bordures/Ombres)
+  static const Color accentColor = Color(0xFF5C85C8);  // Bleu clair acier du logo (Energies)
 
   // =========================================================================
-  // === THÈME CLAIR (Light Mode) ===
+  // === THÈME CLAIR (Light Mode)                                          ===
   // =========================================================================
   static final ThemeData lightTheme = ThemeData(
     brightness: Brightness.light,
@@ -18,11 +15,11 @@ class AppTheme {
     colorScheme: ColorScheme.light(
       primary: primaryColor,
       secondary: accentColor,
-      surface: const Color(0xFFF5F7FA), // Fond de l'app très légèrement grisé
+      surface: const Color(0xFFF9FAFB), // Blanc très légèrement grisé pour le fond
       onSurface: Colors.black87,        // Texte principal
       error: Colors.red.shade800,
     ),
-    scaffoldBackgroundColor: const Color(0xFFF5F7FA),
+    scaffoldBackgroundColor: const Color(0xFFF9FAFB),
     cardColor: Colors.white, // Fond des bottom sheets et cartes
     dividerColor: Colors.grey.shade200,
     shadowColor: Colors.black,
@@ -39,14 +36,14 @@ class AppTheme {
   );
 
   // =========================================================================
-  // === THÈME SOMBRE (Dark Mode) ===
+  // === THÈME SOMBRE (Dark Mode)                                          ===
   // =========================================================================
   static final ThemeData darkTheme = ThemeData(
     brightness: Brightness.dark,
     useMaterial3: true,
     colorScheme: ColorScheme.dark(
-      primary: accentColor, // En Dark Mode, on utilise une couleur plus vive pour contraster
-      secondary: primaryLight,
+      primary: primaryColor, // L'orange clair en dark mode
+      secondary: accentColor, // Le bleu doux aussi
       surface: const Color(0xFF1E1E1E), // Gris très foncé (Surface des cartes)
       onSurface: Colors.white,          // Texte principal
       error: Colors.redAccent,
@@ -57,13 +54,13 @@ class AppTheme {
     shadowColor: Colors.black, // L'ombre reste noire
     appBarTheme: const AppBarTheme(
       backgroundColor: Color(0xFF1E1E1E),
-      foregroundColor: Colors.white,
+      foregroundColor: primaryLight, // Texte orange clair sur fond noir
       elevation: 0,
       centerTitle: true,
     ),
     floatingActionButtonTheme: const FloatingActionButtonThemeData(
-      backgroundColor: accentColor,
-      foregroundColor: Colors.black, // Texte en noir sur fond clair pour la lisibilité
+      backgroundColor: primaryColor,
+      foregroundColor: Colors.white, 
     ),
   );
 }

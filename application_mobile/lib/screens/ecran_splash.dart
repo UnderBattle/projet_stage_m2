@@ -67,7 +67,7 @@ class _EcranSplashState extends State<EcranSplash> {
     final theme = Theme.of(context);
 
     return Scaffold(
-      backgroundColor: theme.colorScheme.primary, // Fond aux couleurs de la marque
+      backgroundColor: theme.scaffoldBackgroundColor,
       body: Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
@@ -75,38 +75,37 @@ class _EcranSplashState extends State<EcranSplash> {
             // =========================================================================
             // === LOGO DE L'APPLICATION ===
             // =========================================================================
-            // Remplacé par une icône thématique parfaitement adaptée au génie climatique.
             Container(
               padding: const EdgeInsets.all(24.0),
               decoration: BoxDecoration(
                 color: Colors.white,
                 shape: BoxShape.circle,
                 boxShadow: [
-                  BoxShadow(color: Colors.black.withValues(alpha: 0.2), blurRadius: 20, offset: const Offset(0, 10))
+                  BoxShadow(color: theme.shadowColor.withValues(alpha: 0.1), blurRadius: 25, offset: const Offset(0, 10))
                 ],
               ),
-              // CORRECTION : Utilisation de Icons.heat_pump (Pompe à chaleur) à la place du sac de réparation
+              // Retour à l'icône de pompe à chaleur adaptée à ta nouvelle charte graphique
               child: Icon(Icons.heat_pump, size: 80, color: theme.colorScheme.primary),
             ),
             const SizedBox(height: 40),
             
             // TEXTE DE CHARGEMENT
-            const Text(
+            Text(
               "Chauffage Der Energies", 
-              style: TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.bold, letterSpacing: 1.2)
+              style: TextStyle(color: theme.colorScheme.primary, fontSize: 22, fontWeight: FontWeight.bold, letterSpacing: 1.2)
             ),
             const SizedBox(height: 10),
             Text(
               "Initialisation...", 
-              style: TextStyle(color: Colors.white70, fontSize: 16, fontStyle: FontStyle.italic)
+              style: TextStyle(color: theme.colorScheme.onSurface.withValues(alpha: 0.6), fontSize: 15, fontStyle: FontStyle.italic)
             ),
             const SizedBox(height: 40),
             
-            // INDICATEUR DE PROGRESSION BLANC
-            const SizedBox(
+            // INDICATEUR DE PROGRESSION
+            SizedBox(
               width: 40,
               height: 40,
-              child: CircularProgressIndicator(color: Colors.white, strokeWidth: 3),
+              child: CircularProgressIndicator(color: theme.colorScheme.secondary, strokeWidth: 3),
             ),
           ],
         ),

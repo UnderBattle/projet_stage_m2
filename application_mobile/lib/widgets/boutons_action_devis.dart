@@ -110,7 +110,7 @@ class BoutonsActionDevis extends StatelessWidget {
                                                 color: theme.cardColor.withValues(alpha: disableUndo ? 0.4 : 0.85), // S'adapte au mode sombre et se grise si inactif
                                                 child: IconButton(
                                                   icon: const Icon(Icons.undo), 
-                                                  color: disableUndo ? theme.disabledColor : theme.colorScheme.primary, 
+                                                  color: disableUndo ? theme.disabledColor : theme.colorScheme.secondary, 
                                                   tooltip: isDrawGoulotteMode ? 'Annuler la goulotte' : 'Annuler le déplacement',
                                                   onPressed: disableUndo ? null : onUndo, // Désactive l'action au clic
                                                 ),
@@ -134,7 +134,7 @@ class BoutonsActionDevis extends StatelessWidget {
                                                 color: theme.cardColor.withValues(alpha: disableRedo ? 0.4 : 0.85),
                                                 child: IconButton(
                                                   icon: const Icon(Icons.redo), 
-                                                  color: disableRedo ? theme.disabledColor : theme.colorScheme.primary,
+                                                  color: disableRedo ? theme.disabledColor : theme.colorScheme.secondary,
                                                   tooltip: isDrawGoulotteMode ? 'Rétablir la goulotte' : 'Rétablir le déplacement',
                                                   onPressed: disableRedo ? null : onRedo,
                                                 ),
@@ -184,7 +184,7 @@ class BoutonsActionDevis extends StatelessWidget {
           }
         ),
         
-        // Bouton d'activation du Mode Goulotte
+        // Bouton d'activation du Mode Goulotte (Reste orange pour bien marquer l'outil de dessin principal)
         Padding(
           padding: const EdgeInsets.only(bottom: 12.0),
           child: Container(

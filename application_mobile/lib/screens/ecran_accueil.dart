@@ -294,8 +294,8 @@ class _EcranAccueilState extends State<EcranAccueil> with WidgetsBindingObserver
                           style: ElevatedButton.styleFrom(
                             elevation: 0,
                             padding: const EdgeInsets.symmetric(horizontal: 30, vertical: 15),
-                            backgroundColor: theme.colorScheme.primary.withValues(alpha: 0.1), // S'adapte au mode sombre
-                            foregroundColor: theme.colorScheme.primary,
+                            backgroundColor: theme.colorScheme.secondary.withValues(alpha: 0.1), 
+                            foregroundColor: theme.colorScheme.secondary,
                             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)), // Bouton très arrondi
                           ),
                         ),
