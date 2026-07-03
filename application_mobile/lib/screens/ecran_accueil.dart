@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:ui'; 
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:camera/camera.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:sensors_plus/sensors_plus.dart';
@@ -142,6 +143,8 @@ class _EcranAccueilState extends State<EcranAccueil> with WidgetsBindingObserver
   /// Déclenche la prise de vue avec la caméra, optimise l'image si elle est trop lourde, puis navigue vers le résultat.
   Future<void> _prendrePhoto() async {
     if (_controller != null && _controller!.value.isInitialized) {
+      HapticFeedback.mediumImpact();
+
       try {
         setState(() => _isOptimizing = true);
         
@@ -171,6 +174,8 @@ class _EcranAccueilState extends State<EcranAccueil> with WidgetsBindingObserver
 
   /// Ouvre la galerie photo, récupère l'image sélectionnée, l'optimise et navigue vers le résultat.
   Future<void> _ouvrirGalerie() async {
+    HapticFeedback.lightImpact();
+
     try {
       final XFile? rawImage = await _picker.pickImage(source: ImageSource.gallery);
       if (rawImage != null && mounted) {

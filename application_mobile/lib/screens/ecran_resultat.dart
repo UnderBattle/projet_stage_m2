@@ -2,6 +2,7 @@ import 'dart:io';
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:image_gallery_saver_plus/image_gallery_saver_plus.dart';
 
 import '../traitement_image.dart';
@@ -212,6 +213,8 @@ class _EcranResultatState extends State<EcranResultat> {
         }
 
         if (_pointsCibles != null) {
+          HapticFeedback.heavyImpact(); 
+          
           setState(() {
             _isProcessing = false;
             _isManualPlacementMode = true; 
@@ -302,6 +305,8 @@ class _EcranResultatState extends State<EcranResultat> {
       _imageFondAvecGoulotteBytes = null; 
       _calqueEquipementPngBytes = null;
       _dernierCalqueEquipementCompletBytes = null; 
+      HapticFeedback.mediumImpact();
+
     } catch (e) {
       print("Erreur inpainting manuel : $e");
       if (mounted) _montrerErreur("Impossible de nettoyer le mur (Erreur OpenCV).");
