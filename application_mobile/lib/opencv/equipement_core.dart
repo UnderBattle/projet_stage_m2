@@ -33,6 +33,12 @@ class EquipementCore {
   }) async {
     try {
       cv.Mat murMat = cv.imdecode(fondPropreBytes, cv.IMREAD_COLOR);
+      
+      // NOUVEAU : Guard Clause Anti-Crash
+      if (murMat.isEmpty || murMat.cols <= 0 || murMat.rows <= 0) {
+        throw Exception("Le fond propre fourni est corrompu ou vide.");
+      }
+
       int wMur = murMat.cols;
       int hMur = murMat.rows;
 
@@ -54,6 +60,11 @@ class EquipementCore {
       // === PHASE PRE-CALCUL : OPTIMISATION DES ASSETS AVANT TRAITEMENT ===
       // =========================================================================
       cv.Mat equipementMat = cv.imdecode(equipementBytes, cv.IMREAD_UNCHANGED);
+      
+      // NOUVEAU : Guard Clause Anti-Crash
+      if (equipementMat.isEmpty || equipementMat.cols <= 0 || equipementMat.rows <= 0) {
+        throw Exception("L'image de l'équipement (PNG) est corrompue ou vide.");
+      }
       
       var rawChannels = cv.split(equipementMat);
       cv.Mat rawAlpha = cv.threshold(rawChannels[3], 10, 255, cv.THRESH_BINARY).$2;
@@ -313,15 +324,21 @@ class EquipementCore {
       cv.Mat maskTotalVolumeOrig = maskTotalVolumePad.region(cv.Rect(pad, pad, wMur, hMur));
       cv.Mat maskBinaireSmall = cv.resize(maskTotalVolumeOrig, (wMur ~/ downscaleSobel, hMur ~/ downscaleSobel));
 
-      var meanStdDev = cv.meanStdDev(grayMurSmall);
+      // CORRECTION 1 : Détruire la texture (bois, saletés) avant de calculer le contraste
+      // En appliquant un flou moyen avant l'écart-type, on ignore les petits détails granuleux
+      cv.Mat grayMurSansTexture = cv.gaussianBlur(grayMurSmall, (5, 5), 0.0);
+
+      var meanStdDev = cv.meanStdDev(grayMurSansTexture);
       double ecartTypeMur = meanStdDev.$2.val[0]; 
 
       double ratioContraste = (ecartTypeMur / 50.0).clamp(0.2, 1.2);
 
       final double reglageOmbreDirBase = 0.12 * ratioContraste;
-      final double reglageOmbreContact = estEquipementNoir ? 0.05 * ratioContraste : 0.25 * ratioContraste;
+      final double reglageOmbreContact = (estEquipementNoir ? 0.05 : 0.25) * ratioContraste;
 
-      cv.Mat grayMurFlou = cv.gaussianBlur(grayMurSmall, (7, 7), 0.0);
+      // CORRECTION 2 : Flou massif pour le calcul directionnel (Sobel)
+      // Un flou de 15x15 sur une miniature détruit TOUTES les aspérités (tâches, noeuds de bois)
+      cv.Mat grayMurFlou = cv.gaussianBlur(grayMurSmall, (15, 15), 0.0);
       cv.Mat sobelX = cv.sobel(grayMurFlou, cv.MatType.CV_32F, 1, 0, ksize: 3);
       cv.Mat sobelY = cv.sobel(grayMurFlou, cv.MatType.CV_32F, 0, 1, ksize: 3);
 
@@ -398,6 +415,7 @@ class EquipementCore {
       double lumMurLocal = (0.114 * bMur) + (0.587 * gMur) + (0.299 * rMur);
       lumMurLocal = math.max(lumMurLocal, 1.0); 
 
+      // On restaure le ratio d'origine (0.7) qui donnait la bonne luminosité
       double ratioLuminositeAmbiante = (lumMurLocal / 128.0).clamp(0.7, 1.0);
       final double reglageLuminositeEquipementBlanc = 0.95 * ratioLuminositeAmbiante; 
       final double reglageLuminositeEquipementNoir = 0.78;
@@ -429,8 +447,10 @@ class EquipementCore {
 
       cv.Scalar meanEquipementV = cv.mean(hsvChannels[2], mask: maskTotalVolume);
 
+      // On restaure le calcul original de la luminosité (denominateurLuma) qui empêchait la clim de devenir trop brillante
       double lumaEquipementNativeHSV = math.max(meanEquipementV.val[0], 1.0);
       double denominateurLuma = estEquipementNoir ? math.max(lumaEquipementNativeHSV, 130.0) : lumaEquipementNativeHSV;
+      
       double influenceMur = estEquipementNoir ? reglageInfluenceOmbreSurNoir : reglageInfluenceOmbreSurBlanc; 
       double influenceEquipement = 1.0 - influenceMur;
 

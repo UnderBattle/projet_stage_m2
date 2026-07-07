@@ -62,7 +62,10 @@ Future<String?> redimensionnerImageLourde(String imagePath) async {
 
     cv.Mat image = cv.imread(imagePath, flags: cv.IMREAD_COLOR);
     
-    if (image.isEmpty) return null;
+    // NOUVEAU : Guard Clause Anti-Crash (Empêche un SIGSEGV C++ si l'image de la galerie est corrompue)
+    if (image.isEmpty || image.cols <= 0 || image.rows <= 0) {
+      throw Exception("Fichier image corrompu ou illisible par OpenCV.");
+    }
 
     int maxSize = 1920; 
     // Vérifie si l'image dépasse la limite autorisée.
@@ -115,7 +118,11 @@ Map<String, dynamic>? prepareImageMatrixForIA(Map<String, dynamic> params) {
 
   // OPTIMISATION : Décodage ultra-rapide en C++ via OpenCV
   cv.Mat originalImage = cv.imdecode(imageBytes, cv.IMREAD_COLOR);
-  if (originalImage.isEmpty) return null;
+  
+  // NOUVEAU : Guard Clause Anti-Crash pour l'analyse IA
+  if (originalImage.isEmpty || originalImage.cols <= 0 || originalImage.rows <= 0) {
+    throw Exception("Image source corrompue lors de la préparation IA.");
+  }
 
   int w = originalImage.cols;
   int h = originalImage.rows;

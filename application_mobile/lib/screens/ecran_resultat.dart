@@ -75,8 +75,8 @@ class _EcranResultatState extends State<EcranResultat> {
 
   bool _isDrawGoulotteMode = false;
   final ValueNotifier<LigneGoulotte?> _goulotteNotifier = ValueNotifier(null);
-  LigneGoulotte? _goulotteInitiale; 
-  LigneGoulotte? _goulotteRedo; 
+  LigneGoulotte? _goulotteInitiale;
+  LigneGoulotte? _goulotteRedo;
   
   final ValueNotifier<bool> _isDraggingGoulotteNotifier = ValueNotifier(false);
   final ValueNotifier<Offset?> _goulotteCurrentEndOrigNotifier = ValueNotifier(null);

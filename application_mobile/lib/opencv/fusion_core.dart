@@ -9,10 +9,20 @@ class FusionCore {
       Uint8List calquePngBytes = params['calquePngBytes']; 
       
       cv.Mat bg = cv.imdecode(fondBytes, cv.IMREAD_COLOR);
+      
+      // NOUVEAU : Guard Clause Anti-Crash
+      if (bg.isEmpty || bg.cols <= 0 || bg.rows <= 0) {
+        throw Exception("Image de fond corrompue pour la fusion.");
+      }
 
       // Le calque PNG ayant été encodé avec une compression de 0, 
       // le décodage C++ est immédiat et sans erreur de mapping mémoire.
       cv.Mat overlay = cv.imdecode(calquePngBytes, cv.IMREAD_UNCHANGED);
+      
+      // NOUVEAU : Guard Clause Anti-Crash
+      if (overlay.isEmpty || overlay.cols <= 0 || overlay.rows <= 0) {
+        throw Exception("Calque PNG corrompu pour la fusion.");
+      }
       
       // Extraction sécurisée du BGR et du canal Alpha
       cv.Mat overlayBgr = cv.cvtColor(overlay, cv.COLOR_BGRA2BGR);

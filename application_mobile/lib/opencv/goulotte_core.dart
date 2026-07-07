@@ -56,6 +56,12 @@ class GoulotteCore {
   }) async {
     try {
       cv.Mat fondMat = cv.imdecode(imageDeFondBytes, cv.IMREAD_COLOR);
+      
+      // NOUVEAU : Guard Clause Anti-Crash
+      if (fondMat.isEmpty || fondMat.cols <= 0 || fondMat.rows <= 0) {
+        throw Exception("Image de fond corrompue pour le tracé de la goulotte.");
+      }
+
       int w = fondMat.cols;
       int h = fondMat.rows;
 

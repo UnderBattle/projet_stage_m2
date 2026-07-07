@@ -22,6 +22,12 @@ class InpaintingCore {
   }) async {
     try {
       cv.Mat murMat = cv.imread(photoPath, flags: cv.IMREAD_COLOR);
+      
+      // NOUVEAU : Guard Clause Anti-Crash
+      if (murMat.isEmpty || murMat.cols <= 0 || murMat.rows <= 0) {
+        throw Exception("Impossible de lire la photo source pour l'inpainting. Fichier introuvable ou corrompu.");
+      }
+
       int wMur = murMat.cols;
       int hMur = murMat.rows;
 
@@ -246,6 +252,44 @@ class InpaintingCore {
         patch.copyTo(murRepare.region(cropRect));
       }
 
+      // =========================================================================
+      // === CORRECTION : NORMALISATION ADAPTATIVE DE LUMINOSITÉ ===
+      // =========================================================================
+      // On calcule une "couronne" de référence tout autour du trou pour connaître la vraie luminosité du mur
+      cv.Mat anneauRef = cv.dilate(maskLama, cv.Mat.ones(15, 15, cv.MatType.CV_8UC1));
+      cv.Mat masqueAnneau = cv.subtract(anneauRef, maskLama);
+      
+      cv.Scalar moyenneMur = cv.mean(murMat, mask: masqueAnneau);
+      cv.Scalar moyennePatch = cv.mean(murRepare, mask: maskLama);
+
+      // On calcule le ratio de correction (B, G, R)
+      double ratioB = moyenneMur.val[0] / (moyennePatch.val[0] + 0.0001);
+      double ratioG = moyenneMur.val[1] / (moyennePatch.val[1] + 0.0001);
+      double ratioR = moyenneMur.val[2] / (moyennePatch.val[2] + 0.0001);
+
+      // Application de la correction uniquement sur la zone du patch (cropRect)
+      cv.Mat petitPatch = murRepare.region(cropRect);
+      cv.Mat petitMask = maskLama.region(cropRect);
+      
+      // On sépare les canaux pour corriger chaque couleur individuellement
+      var channels = cv.split(petitPatch);
+      cv.Mat b = channels[0].convertTo(cv.MatType.CV_32FC1, alpha: ratioB);
+      cv.Mat g = channels[1].convertTo(cv.MatType.CV_32FC1, alpha: ratioG);
+      cv.Mat r = channels[2].convertTo(cv.MatType.CV_32FC1, alpha: ratioR);
+      
+      cv.Mat patchCorrige = cv.merge(cv.VecMat.fromList([
+        b.convertTo(cv.MatType.CV_8UC1),
+        g.convertTo(cv.MatType.CV_8UC1),
+        r.convertTo(cv.MatType.CV_8UC1)
+      ]));
+
+      // On réinjecte le patch corrigé dans le mur
+      patchCorrige.copyTo(murRepare.region(cropRect), mask: petitMask);
+
+      // =========================================================================
+      // === FIN DE CORRECTION ===
+      // =========================================================================
+
       // FUSION DES BORDS (FEATHERING) : Fusionne en douceur les bords du patch réparé avec le mur d'origine.
       cv.Mat resultImg = murRepare.clone();
       
@@ -255,17 +299,23 @@ class InpaintingCore {
           cv.Mat petitMurRepare = murRepare.region(cropRect);
           cv.Mat petitMurOriginal = murMat.region(cropRect);
 
+          // Création du masque de flou
           cv.Mat maskFeather8u = cv.gaussianBlur(petitMaskLama, (31, 31), 0.0);
-          cv.Mat maskFeather3c = cv.cvtColor(maskFeather8u, cv.COLOR_GRAY2BGR);
+          
+          // CRITIQUE : Création de matrices 3 canaux au lieu de convertir via des Scalar
+          cv.Mat maskFeather3c = cv.Mat.zeros(maskFeather8u.rows, maskFeather8u.cols, cv.MatType.CV_8UC3);
+          cv.merge(cv.VecMat.fromList([maskFeather8u, maskFeather8u, maskFeather8u]), dst: maskFeather3c);
           
           cv.Mat invMaskFeather8u = cv.bitwiseNOT(maskFeather8u);
-          cv.Mat invMaskFeather3c = cv.cvtColor(invMaskFeather8u, cv.COLOR_GRAY2BGR);
+          cv.Mat invMaskFeather3c = cv.Mat.zeros(invMaskFeather8u.rows, invMaskFeather8u.cols, cv.MatType.CV_8UC3);
+          cv.merge(cv.VecMat.fromList([invMaskFeather8u, invMaskFeather8u, invMaskFeather8u]), dst: invMaskFeather3c);
 
-          // OPTIMISATION RAM : Plus de conversion massives en 32F. Le blending est fait en 8 bits !
+          // OPTIMISATION RAM : Conversion sécurisée pour le blending
           cv.Mat fgInpaint = cv.multiply(petitMurRepare, maskFeather3c, scale: 1.0 / 255.0);
           cv.Mat bgInpaint = cv.multiply(petitMurOriginal, invMaskFeather3c, scale: 1.0 / 255.0);
           
-          cv.Mat petitResultImg = cv.add(fgInpaint, bgInpaint);
+          // Conversion explicite en 8 bits pour éviter les conflits de types
+          cv.Mat petitResultImg = cv.add(fgInpaint, bgInpaint).convertTo(cv.MatType.CV_8UC3);
 
           petitResultImg.copyTo(resultImg.region(cropRect));
         }
