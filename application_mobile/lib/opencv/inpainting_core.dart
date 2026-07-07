@@ -220,7 +220,7 @@ class InpaintingCore {
           
           interpreter.close();
           inpaintingReussi = true;
-          print("[IA Inpainting] LaMa a rebouché le trou avec succès en 512x512 via GPU !");
+          print("[IA Inpainting] LaMa a rebouché le trou avec succès en 512x512 via CPU (XNNPack) !");
           
         } catch (e) {
           print("[IA Inpainting] Echec de LaMa, passage au Tampon OpenCV : $e");

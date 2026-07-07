@@ -8,43 +8,41 @@ import 'package:path_provider/path_provider.dart';
 Future<void> nettoyerCacheImages() async {
   try {
     final directory = await getTemporaryDirectory();
-    
-    // L'ajout de recursive: true est la clé ! On fouille dans tous les sous-dossiers.
-    final files = directory.listSync(recursive: true); 
-    
+
     int count = 0;
     double totalSizeMB = 0;
-    
+
     print("=== DÉBUT DE L'ANALYSE DU CACHE ===");
-    
-    for (var file in files) {
+
+    // API asynchrone pour ne pas bloquer le thread principal.
+    final Stream<FileSystemEntity> files = directory.list(recursive: true);
+
+    await for (var file in files) {
       if (file is File) {
-        // Calcul du poids du fichier
-        int sizeBytes = file.lengthSync();
+        // Calcul asynchrone du poids du fichier.
+        int sizeBytes = await file.length();
         double sizeMB = sizeBytes / (1024 * 1024);
         totalSizeMB += sizeMB;
-        
-        // On affiche dans la console tous les fichiers qui pèsent plus de 1 Mo 
-        // pour que tu puisses VOIR le coupable.
+
+        // On affiche dans la console tous les fichiers qui pèsent plus de 1 Mo.
         if (sizeMB > 1.0) {
           print("Gros fichier trouvé : ${file.path.split('/').last} (${sizeMB.toStringAsFixed(2)} Mo)");
         }
-        
+
         final path = file.path.toLowerCase();
-        
-        // On supprime sans pitié toutes les images, peu importe où elles sont cachées
-        if (path.contains('photo_optimisee_') || 
-            path.contains('image_picker_') || 
-            path.endsWith('.jpg') || 
-            path.endsWith('.jpeg') || 
+
+        // On supprime toutes les images du cache.
+        if (path.contains('photo_optimisee_') ||
+            path.contains('image_picker_') ||
+            path.endsWith('.jpg') ||
+            path.endsWith('.jpeg') ||
             path.endsWith('.png')) {
-              
           await file.delete();
           count++;
         }
       }
     }
-    
+
     print("=== RÉSULTAT DU NETTOYAGE ===");
     print("[Optimisation] Poids total scanné : ${totalSizeMB.toStringAsFixed(2)} Mo");
     print("[Optimisation] Fichiers supprimés : $count");
@@ -79,9 +77,10 @@ Future<String?> redimensionnerImageLourde(String imagePath) async {
 
       cv.Mat resized = cv.resize(image, (newWidth, newHeight), interpolation: cv.INTER_AREA);
 
-      // Sauvegarde l'image redimensionnée dans un fichier temporaire.
-      final directory = await getTemporaryDirectory();
-      final path = '${directory.path}/photo_optimisee_${DateTime.now().millisecondsSinceEpoch}.jpg';
+      // On utilise le dossier parent de l'image source (qui est dans le cache)
+      // pour éviter d'appeler un plugin (getTemporaryDirectory) depuis l'isolate.
+      final dirPath = originalFile.parent.path;
+      final path = '$dirPath/photo_optimisee_${DateTime.now().millisecondsSinceEpoch}.jpg';
       
       // Sauvegarde ultra-rapide avec OpenCV
       cv.imwrite(path, resized, params: cv.VecI32.fromList([cv.IMWRITE_JPEG_QUALITY, 90]));
