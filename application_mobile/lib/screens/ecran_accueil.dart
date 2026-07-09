@@ -19,14 +19,15 @@ class EcranAccueil extends StatefulWidget {
   @override
   State<EcranAccueil> createState() => _EcranAccueilState();
 }
-
-// OPTIMISATION : Ajout de WidgetsBindingObserver pour écouter les mises en pause de l'application (ex: bouton Home)
 class _EcranAccueilState extends State<EcranAccueil> with WidgetsBindingObserver {
   CameraController? _controller;
   final ImagePicker _picker = ImagePicker();
   
   /// Indique si une image est en cours de redimensionnement pour afficher l'écran de chargement.
   bool _isOptimizing = false;
+
+  /// Empêche la fermeture de la caméra quand on ouvre le sélecteur de galerie
+  bool _isPickingImage = false;
 
   // Future pour suivre la libération de la caméra et éviter les race conditions.
   Future<void>? _disposeControllerFuture;
@@ -83,6 +84,8 @@ class _EcranAccueilState extends State<EcranAccueil> with WidgetsBindingObserver
     // Si l'application passe en arrière-plan, on libère la caméra.
     if (state == AppLifecycleState.inactive || state == AppLifecycleState.paused) {
       _arreterEcouteAccelerometre();
+
+      if (_isPickingImage) return;
 
       // Si le contrôleur existe et est initialisé, on le libère.
       if (cameraController != null && cameraController.value.isInitialized) {
@@ -204,7 +207,20 @@ class _EcranAccueilState extends State<EcranAccueil> with WidgetsBindingObserver
     HapticFeedback.lightImpact();
 
     try {
+      // On verrouille la fermeture de la caméra avant d'ouvrir le sélecteur
+      setState(() {
+        _isPickingImage = true;
+      });
+
       final XFile? rawImage = await _picker.pickImage(source: ImageSource.gallery);
+      
+      // On déverrouille immédiatement après le choix ou l'annulation de l'artisan
+      if (mounted) {
+        setState(() {
+          _isPickingImage = false;
+        });
+      }
+
       if (rawImage != null && mounted) {
         setState(() => _isOptimizing = true);
         
@@ -227,7 +243,10 @@ class _EcranAccueilState extends State<EcranAccueil> with WidgetsBindingObserver
     } catch (e) {
       print("Erreur galerie : $e");
       if (mounted) {
-        setState(() => _isOptimizing = false);
+        setState(() {
+          _isOptimizing = false;
+          _isPickingImage = false;
+        });
         _montrerErreur("Impossible de charger l'image depuis la galerie.");
       }
     }
@@ -235,7 +254,7 @@ class _EcranAccueilState extends State<EcranAccueil> with WidgetsBindingObserver
 
   /// Navigue vers l'écran de résultat en lui passant le chemin de l'image finale.
   Future<void> _allerVersResultat(String imagePath) async {
-    // OPTIMISATION : On met en pause l'accéléromètre PENDANT qu'on est sur l'écran d'édition
+    // On met en pause l'accéléromètre pendant qu'on est sur l'écran d'édition
     _arreterEcouteAccelerometre();
     
     await Navigator.push(
@@ -253,7 +272,7 @@ class _EcranAccueilState extends State<EcranAccueil> with WidgetsBindingObserver
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context); // NOUVEAU : Récupération du thème
+    final theme = Theme.of(context);
 
     return Scaffold(
       appBar: AppBar(
