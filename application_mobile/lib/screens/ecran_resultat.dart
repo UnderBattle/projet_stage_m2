@@ -69,14 +69,14 @@ class _EcranResultatState extends State<EcranResultat> {
 
   final List<Offset> _historiqueDecalages = [Offset.zero];
   final List<Offset> _historiqueRedoDecalages = [];
+  final List<LigneGoulotte?> _historiqueGoulottes = [null];
+  final List<LigneGoulotte?> _historiqueRedoGoulottes = [];
   
   final ValueNotifier<int> _historiqueLengthNotifier = ValueNotifier(1);
   final ValueNotifier<int> _historiqueRedoLengthNotifier = ValueNotifier(0);
 
   bool _isDrawGoulotteMode = false;
   final ValueNotifier<LigneGoulotte?> _goulotteNotifier = ValueNotifier(null);
-  LigneGoulotte? _goulotteInitiale;
-  LigneGoulotte? _goulotteRedo;
   
   final ValueNotifier<bool> _isDraggingGoulotteNotifier = ValueNotifier(false);
   final ValueNotifier<Offset?> _goulotteCurrentEndOrigNotifier = ValueNotifier(null);
@@ -418,11 +418,15 @@ class _EcranResultatState extends State<EcranResultat> {
     if (_isProcessing) return;
 
     if (_isDrawGoulotteMode) {
-      if (_goulotteNotifier.value != null && _goulotteInitiale != null) {
-        _goulotteRedo = _goulotteNotifier.value;
-        _historiqueRedoLengthNotifier.value = 1;
-        
-        _goulotteNotifier.value = _goulotteInitiale;
+      if (_historiqueGoulottes.length > 1) {
+        final currentGoulotte = _historiqueGoulottes.removeLast();
+        _historiqueRedoGoulottes.add(currentGoulotte);
+
+        _goulotteNotifier.value = _historiqueGoulottes.last;
+
+        _historiqueLengthNotifier.value = _historiqueGoulottes.length;
+        _historiqueRedoLengthNotifier.value = _historiqueRedoGoulottes.length;
+
         _genererIncrustation(recomputeGoulotte: true, recomputeEquipement: false);
       }
     } else {
@@ -443,10 +447,15 @@ class _EcranResultatState extends State<EcranResultat> {
     if (_isProcessing) return;
 
     if (_isDrawGoulotteMode) {
-      if (_goulotteRedo != null) {
-        _goulotteNotifier.value = _goulotteRedo;
-        _goulotteRedo = null;
-        _historiqueRedoLengthNotifier.value = 0;
+      if (_historiqueRedoGoulottes.isNotEmpty) {
+        final redoneGoulotte = _historiqueRedoGoulottes.removeLast();
+        _historiqueGoulottes.add(redoneGoulotte);
+
+        _goulotteNotifier.value = redoneGoulotte;
+
+        _historiqueLengthNotifier.value = _historiqueGoulottes.length;
+        _historiqueRedoLengthNotifier.value = _historiqueRedoGoulottes.length;
+
         _genererIncrustation(recomputeGoulotte: true, recomputeEquipement: false);
       }
     } else {
@@ -739,15 +748,22 @@ class _EcranResultatState extends State<EcranResultat> {
                                         _genererIncrustation(recomputeGoulotte: false, recomputeEquipement: true); 
                                       },
                                       onGoulotteCreated: (LigneGoulotte newGoulotte) {
-                                        _goulotteInitiale = newGoulotte; 
                                         _goulotteNotifier.value = newGoulotte;
-                                        _goulotteRedo = null;
+                                        _historiqueGoulottes.add(newGoulotte);
+                                        _historiqueLengthNotifier.value = _historiqueGoulottes.length;
+
+                                        _historiqueRedoGoulottes.clear();
                                         _historiqueRedoLengthNotifier.value = 0;
                                         _genererIncrustation(recomputeGoulotte: true, recomputeEquipement: false);
                                       },
                                       onGoulotteEdited: () {
-                                        _goulotteRedo = null;
-                                        _historiqueRedoLengthNotifier.value = 0;
+                                        if (_historiqueGoulottes.last != _goulotteNotifier.value) {
+                                          _historiqueGoulottes.add(_goulotteNotifier.value);
+                                          _historiqueLengthNotifier.value = _historiqueGoulottes.length;
+
+                                          _historiqueRedoGoulottes.clear();
+                                          _historiqueRedoLengthNotifier.value = 0;
+                                        }
                                         _genererIncrustation(recomputeGoulotte: true, recomputeEquipement: false);
                                       },
                                     );
@@ -770,7 +786,6 @@ class _EcranResultatState extends State<EcranResultat> {
                           historiqueLengthNotifier: _historiqueLengthNotifier,
                           historiqueRedoLengthNotifier: _historiqueRedoLengthNotifier, 
                           goulotteNotifier: _goulotteNotifier,
-                          goulotteInitiale: _goulotteInitiale,
                           isDrawGoulotteMode: _isDrawGoulotteMode,
                           isProcessing: _isProcessing,
                           onUndo: _reinitialiserPosition,
@@ -779,13 +794,22 @@ class _EcranResultatState extends State<EcranResultat> {
                           onToggleGoulotteMode: () {
                             setState(() {
                               _isDrawGoulotteMode = !_isDrawGoulotteMode;
-                              _isDraggingEquipementNotifier.value = false; 
+                              _isDraggingEquipementNotifier.value = false;
+
+                              if (_isDrawGoulotteMode) {
+                                _historiqueLengthNotifier.value = _historiqueGoulottes.length;
+                                _historiqueRedoLengthNotifier.value = _historiqueRedoGoulottes.length;
+                              } else {
+                                _historiqueLengthNotifier.value = _historiqueDecalages.length;
+                                _historiqueRedoLengthNotifier.value = _historiqueRedoDecalages.length;
+                              }
                             });
                           },
                           onDeleteConfirmed: () {
-                            _goulotteNotifier.value = null; 
-                            _goulotteInitiale = null; 
-                            _goulotteRedo = null;
+                            _goulotteNotifier.value = null;
+                            _historiqueGoulottes.add(null);
+                            _historiqueLengthNotifier.value = _historiqueGoulottes.length;
+                            _historiqueRedoGoulottes.clear();
                             _historiqueRedoLengthNotifier.value = 0;
                             _genererIncrustation(recomputeGoulotte: true, recomputeEquipement: false); 
                           },

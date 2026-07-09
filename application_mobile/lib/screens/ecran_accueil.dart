@@ -28,6 +28,9 @@ class _EcranAccueilState extends State<EcranAccueil> with WidgetsBindingObserver
   /// Indique si une image est en cours de redimensionnement pour afficher l'écran de chargement.
   bool _isOptimizing = false;
 
+  // Future pour suivre la libération de la caméra et éviter les race conditions.
+  Future<void>? _disposeControllerFuture;
+
   // =========================================================================
   // === VARIABLES POUR LE NIVEAU À BULLE ===
   // =========================================================================
@@ -73,13 +76,30 @@ class _EcranAccueilState extends State<EcranAccueil> with WidgetsBindingObserver
   // =========================================================================
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    // Cas 1 : L'application passe en arrière-plan (Bouton Home, appel téléphonique, etc.)
+    super.didChangeAppLifecycleState(state);
+    // On gère le cycle de vie de la caméra pour éviter les lags/crashs au retour de l'application.
+    final CameraController? cameraController = _controller;
+
+    // Si l'application passe en arrière-plan, on libère la caméra.
     if (state == AppLifecycleState.inactive || state == AppLifecycleState.paused) {
       _arreterEcouteAccelerometre();
+
+      // Si le contrôleur existe et est initialisé, on le libère.
+      if (cameraController != null && cameraController.value.isInitialized) {
+        // On stocke le Future de la libération pour pouvoir l'attendre plus tard.
+        _disposeControllerFuture = cameraController.dispose();
+        // On met le contrôleur à null pour forcer sa ré-initialisation au retour.
+        if (mounted) setState(() => _controller = null);
+      }
     } 
-    // Cas 2 : L'utilisateur revient sur l'application
+    // Si l'utilisateur revient sur l'application.
     else if (state == AppLifecycleState.resumed) {
       _demarrerEcouteAccelerometre();
+
+      // Si le contrôleur a été libéré (_controller est null), on le recrée.
+      if (_controller == null) {
+        _initialiserCamera();
+      }
     }
   }
 
@@ -104,6 +124,9 @@ class _EcranAccueilState extends State<EcranAccueil> with WidgetsBindingObserver
   }
 
   Future<void> _initialiserCamera() async {
+    // On attend que la caméra précédente soit complètement libérée avant d'en créer une nouvelle.
+    await _disposeControllerFuture;
+
     if (widget.cameras.isNotEmpty) {
       _controller = CameraController(
         widget.cameras[0],
@@ -148,6 +171,10 @@ class _EcranAccueilState extends State<EcranAccueil> with WidgetsBindingObserver
       try {
         setState(() => _isOptimizing = true);
         
+        // CORRECTION BUG CHARGEMENT : On force un court délai asynchrone (100ms) pour s'assurer 
+        // que Flutter dessine bien la frame avec le filtre flouté (BackdropFilter) avant de bloquer quoi que ce soit.
+        await Future.delayed(const Duration(milliseconds: 100));
+        
         // Assure que les modèles d'IA sont initialisés avant de continuer.
         if (!IAService().isInitialized) {
           await IAService().initModels();
@@ -180,6 +207,10 @@ class _EcranAccueilState extends State<EcranAccueil> with WidgetsBindingObserver
       final XFile? rawImage = await _picker.pickImage(source: ImageSource.gallery);
       if (rawImage != null && mounted) {
         setState(() => _isOptimizing = true);
+        
+        // CORRECTION BUG CHARGEMENT : Même sécurité ici. On garantit au Choreographer 
+        // le temps de rendre l'UI visuelle de chargement.
+        await Future.delayed(const Duration(milliseconds: 100));
         
         // Assure que les modèles d'IA sont initialisés avant de continuer.
         if (!IAService().isInitialized) {

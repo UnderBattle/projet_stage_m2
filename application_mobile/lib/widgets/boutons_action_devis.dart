@@ -8,7 +8,6 @@ class BoutonsActionDevis extends StatelessWidget {
   final ValueNotifier<int> historiqueLengthNotifier;
   final ValueNotifier<int> historiqueRedoLengthNotifier; 
   final ValueNotifier<LigneGoulotte?> goulotteNotifier;
-  final LigneGoulotte? goulotteInitiale;
   final bool isDrawGoulotteMode;
   final bool isProcessing;
   final VoidCallback onUndo;
@@ -24,7 +23,6 @@ class BoutonsActionDevis extends StatelessWidget {
     required this.historiqueLengthNotifier,
     required this.historiqueRedoLengthNotifier, 
     required this.goulotteNotifier,
-    required this.goulotteInitiale,
     required this.isDrawGoulotteMode,
     required this.isProcessing,
     required this.onUndo,
@@ -63,9 +61,7 @@ class BoutonsActionDevis extends StatelessWidget {
                           builder: (context, goulotteActuelle, _) {
                             
                             // 1. Détermination de l'état "Actif/Inactif" pour chaque bouton
-                            bool isUndoActive = (!isDrawGoulotteMode && historyLength > 1) || 
-                                                (isDrawGoulotteMode && goulotteActuelle != null && goulotteInitiale != null && goulotteActuelle != goulotteInitiale);
-                                                
+                            bool isUndoActive = historyLength > 1;
                             // Le redo fonctionne de la même manière pour les 2 modes grâce à sa variable de longueur
                             bool isRedoActive = historyRedoLength > 0; 
                             
