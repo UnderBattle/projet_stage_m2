@@ -633,16 +633,17 @@ class _EcranResultatState extends State<EcranResultat> {
       appBar: AppBar(
         title: const Text('Configuration du Devis'),
         actions: [
-          // Bouton discret permettant de basculer la visibilité du panneau d'édition supérieur
-          IconButton(
-            icon: Icon(_interfaceVisible ? Icons.visibility : Icons.visibility_off),
-            tooltip: _interfaceVisible ? 'Masquer les boutons' : 'Afficher les boutons',
-            onPressed: () {
-              setState(() {
-                _interfaceVisible = !_interfaceVisible;
-              });
-            },
-          ),
+          // Le bouton pour masquer/afficher les actions n'apparaît que si un équipement est sélectionné.
+          if (_modeleSelectionne != null)
+            IconButton(
+              icon: Icon(_interfaceVisible ? Icons.visibility : Icons.visibility_off),
+              tooltip: _interfaceVisible ? 'Masquer les boutons' : 'Afficher les boutons',
+              onPressed: () {
+                setState(() {
+                  _interfaceVisible = !_interfaceVisible;
+                });
+              },
+            ),
         ],
       ),
       body: Listener(
