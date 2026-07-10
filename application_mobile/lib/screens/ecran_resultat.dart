@@ -41,6 +41,9 @@ class _EcranResultatState extends State<EcranResultat> {
   
   Uint8List? _imageResultatBytes; // L'image finale (avec goulotte + equipement)
   
+  /// Gère la visibilité exclusive du panneau supérieur d'actions d'édition
+  bool _interfaceVisible = true;
+  
   // =========================================================================
   // === SYSTÈME DE CACHE INDÉPENDANT ===
   // =========================================================================
@@ -629,6 +632,18 @@ class _EcranResultatState extends State<EcranResultat> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Configuration du Devis'),
+        actions: [
+          // Bouton discret permettant de basculer la visibilité du panneau d'édition supérieur
+          IconButton(
+            icon: Icon(_interfaceVisible ? Icons.visibility : Icons.visibility_off),
+            tooltip: _interfaceVisible ? 'Masquer les boutons' : 'Afficher les boutons',
+            onPressed: () {
+              setState(() {
+                _interfaceVisible = !_interfaceVisible;
+              });
+            },
+          ),
+        ],
       ),
       body: Listener(
         onPointerDown: (_) {
@@ -776,43 +791,51 @@ class _EcranResultatState extends State<EcranResultat> {
                       ),
                     ),
                     
+                    // CORRECTIONS : Les boutons d'action de l'historique sont enveloppés dans l'animation d'opacité adaptive
                     if (_modeleSelectionne != null && !_isManualPlacementMode)
                       Positioned(
                         top: 10,
                         right: 10,
-                        child: BoutonsActionDevis(
-                          isDraggingEquipementNotifier: _isDraggingEquipementNotifier,
-                          isDraggingGoulotteNotifier: _isDraggingGoulotteNotifier,
-                          historiqueLengthNotifier: _historiqueLengthNotifier,
-                          historiqueRedoLengthNotifier: _historiqueRedoLengthNotifier, 
-                          goulotteNotifier: _goulotteNotifier,
-                          isDrawGoulotteMode: _isDrawGoulotteMode,
-                          isProcessing: _isProcessing,
-                          onUndo: _reinitialiserPosition,
-                          onRedo: _retablirPosition, 
-                          onResetPosition: _resetPositionEquipement,
-                          onToggleGoulotteMode: () {
-                            setState(() {
-                              _isDrawGoulotteMode = !_isDrawGoulotteMode;
-                              _isDraggingEquipementNotifier.value = false;
+                        child: AnimatedOpacity(
+                          opacity: _interfaceVisible ? 1.0 : 0.0,
+                          duration: const Duration(milliseconds: 250),
+                          child: IgnorePointer(
+                            ignoring: !_interfaceVisible, // Empêche l'artisan d'intercepter les clics à travers le vide
+                            child: BoutonsActionDevis(
+                              isDraggingEquipementNotifier: _isDraggingEquipementNotifier,
+                              isDraggingGoulotteNotifier: _isDraggingGoulotteNotifier,
+                              historiqueLengthNotifier: _historiqueLengthNotifier,
+                              historiqueRedoLengthNotifier: _historiqueRedoLengthNotifier, 
+                              goulotteNotifier: _goulotteNotifier,
+                              isDrawGoulotteMode: _isDrawGoulotteMode,
+                              isProcessing: _isProcessing,
+                              onUndo: _reinitialiserPosition,
+                              onRedo: _retablirPosition, 
+                              onResetPosition: _resetPositionEquipement,
+                              onToggleGoulotteMode: () {
+                                setState(() {
+                                  _isDrawGoulotteMode = !_isDrawGoulotteMode;
+                                  _isDraggingEquipementNotifier.value = false;
 
-                              if (_isDrawGoulotteMode) {
+                                  if (_isDrawGoulotteMode) {
+                                    _historiqueLengthNotifier.value = _historiqueGoulottes.length;
+                                    _historiqueRedoLengthNotifier.value = _historiqueRedoGoulottes.length;
+                                  } else {
+                                    _historiqueLengthNotifier.value = _historiqueDecalages.length;
+                                    _historiqueRedoLengthNotifier.value = _historiqueRedoDecalages.length;
+                                  }
+                                });
+                              },
+                              onDeleteConfirmed: () {
+                                _goulotteNotifier.value = null;
+                                _historiqueGoulottes.add(null);
                                 _historiqueLengthNotifier.value = _historiqueGoulottes.length;
-                                _historiqueRedoLengthNotifier.value = _historiqueRedoGoulottes.length;
-                              } else {
-                                _historiqueLengthNotifier.value = _historiqueDecalages.length;
-                                _historiqueRedoLengthNotifier.value = _historiqueRedoDecalages.length;
-                              }
-                            });
-                          },
-                          onDeleteConfirmed: () {
-                            _goulotteNotifier.value = null;
-                            _historiqueGoulottes.add(null);
-                            _historiqueLengthNotifier.value = _historiqueGoulottes.length;
-                            _historiqueRedoGoulottes.clear();
-                            _historiqueRedoLengthNotifier.value = 0;
-                            _genererIncrustation(recomputeGoulotte: true, recomputeEquipement: false); 
-                          },
+                                _historiqueRedoGoulottes.clear();
+                                _historiqueRedoLengthNotifier.value = 0;
+                                _genererIncrustation(recomputeGoulotte: true, recomputeEquipement: false); 
+                              },
+                            ),
+                          ),
                         ),
                       ),
 

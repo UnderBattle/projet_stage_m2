@@ -129,7 +129,11 @@ class GoulotteCore {
 
       // Le flou est appliqué à la toute fin pour que la ligne sombre du bas
       // se fonde de manière naturelle avec le reste de la goulotte (dégradé doux)
-      cv.Mat goulotteBgrSmooth = cv.gaussianBlur(goulotteBgr, (7, 7), 0.0);
+      // NOUVEAU : Le flou est maintenant dynamique et plus puissant pour lisser parfaitement le cylindre interne
+      int innerBlur = (largeurPx * 0.25).toInt();
+      if (innerBlur % 2 == 0) innerBlur += 1;
+      if (innerBlur < 7) innerBlur = 7;
+      cv.Mat goulotteBgrSmooth = cv.gaussianBlur(goulotteBgr, (innerBlur, innerBlur), 0.0);
 
       // 3. Création de l'ombre portée de la goulotte (Drop Shadow)
       // Ombre adaptative calculée sur le fond (comme pour l'équipement)
@@ -302,13 +306,23 @@ class GoulotteCore {
       cv.Mat goulotteRgbFinal = cv.addWeighted(goulotteBrouillee, 1.0, noise, 1.0, -128.0);
 
       // 6. Fusion Finale (Alpha Blending)
-      // Léger flou sur le masque binaire pour un anti-aliasing parfait des bords
-      cv.Mat alphaMask = cv.gaussianBlur(maskBinaire, (3, 3), 0.0);
+      // Lissage dynamique des bords pour retirer l'aliasing sans créer de halo sombre
+      int edgeBlur = (largeurPx * 0.05).toInt(); // Réduit à 5% pour un bord net mais doux
+      if (edgeBlur % 2 == 0) edgeBlur += 1;
+      if (edgeBlur < 3) edgeBlur = 3;
+      
+      // ASTUCE ANTI-HALO : On dilate les couleurs de la goulotte vers l'extérieur.
+      // Ainsi, le flou du masque ne "goûtera" jamais au fond noir de l'image, 
+      // éliminant totalement l'effet de liseré gris/noir sur les bords !
+      cv.Mat kernelDilate = cv.Mat.ones(edgeBlur, edgeBlur, cv.MatType.CV_8UC1);
+      cv.Mat goulotteRgbExpanded = cv.dilate(goulotteRgbFinal, kernelDilate);
+
+      cv.Mat alphaMask = cv.gaussianBlur(maskBinaire, (edgeBlur, edgeBlur), 0.0);
       cv.Mat alpha3_8u = cv.cvtColor(alphaMask, cv.COLOR_GRAY2BGR);
       cv.Mat invAlpha3_8u = cv.bitwiseNOT(alpha3_8u);
 
-      // Fusion Alpha entièrement en 8 bits avec paramètre d'échelle
-      cv.Mat fgBlended = cv.multiply(goulotteRgbFinal, alpha3_8u, scale: 1.0 / 255.0);
+      // Fusion Alpha entièrement en 8 bits avec paramètre d'échelle sur les couleurs dilatées
+      cv.Mat fgBlended = cv.multiply(goulotteRgbExpanded, alpha3_8u, scale: 1.0 / 255.0);
       cv.Mat bgBlended = cv.multiply(murOmbre, invAlpha3_8u, scale: 1.0 / 255.0);
       cv.Mat resultatFinal = cv.add(fgBlended, bgBlended);
 

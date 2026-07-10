@@ -21,7 +21,7 @@ class CatalogueService {
   factory CatalogueService() => _instance;
   CatalogueService._internal();
 
-  // Le catalogue est maintenant typé et protégé
+  // Le catalogue est typé et protégé
   final Map<String, List<Equipement>> catalogueGlobal = {
     'Climatisations': [
       Equipement(
