@@ -76,7 +76,7 @@ class _EcranSplashState extends State<EcranSplash> {
             // === LOGO DE L'APPLICATION ===
             // =========================================================================
             Container(
-              padding: const EdgeInsets.all(24.0),
+              padding: const EdgeInsets.all(3.0),
               decoration: BoxDecoration(
                 color: Colors.white,
                 shape: BoxShape.circle,
@@ -84,19 +84,24 @@ class _EcranSplashState extends State<EcranSplash> {
                   BoxShadow(color: theme.shadowColor.withValues(alpha: 0.1), blurRadius: 25, offset: const Offset(0, 10))
                 ],
               ),
-              // Retour à l'icône de pompe à chaleur adaptée à ta nouvelle charte graphique
-              child: Icon(Icons.heat_pump, size: 80, color: theme.colorScheme.primary),
+              // Utilisation de l'icône de l'application
+              child: Image.asset('assets/app_icon_splash_screen.png', width: 180, height: 180),
             ),
             const SizedBox(height: 40),
             
             // TEXTE DE CHARGEMENT
-            Text(
-              "Chauffage Der Energies", 
-              style: TextStyle(color: theme.colorScheme.primary, fontSize: 22, fontWeight: FontWeight.bold, letterSpacing: 1.2)
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 32.0),
+              child: Text(
+                "Application d'Incrustation d'Équipements",
+                textAlign: TextAlign.center,
+                style: TextStyle(color: theme.colorScheme.primary, fontSize: 22, fontWeight: FontWeight.bold, letterSpacing: 1.2),
+              ),
             ),
             const SizedBox(height: 10),
             Text(
-              "Initialisation...", 
+              "Initialisation...",
+              textAlign: TextAlign.center,
               style: TextStyle(color: theme.colorScheme.onSurface.withValues(alpha: 0.6), fontSize: 15, fontStyle: FontStyle.italic)
             ),
             const SizedBox(height: 40),
