@@ -5,6 +5,12 @@ class Equipement {
   final double profondeur;
   final double hauteur;
   final double largeur;
+  
+  // Champ optionnel
+  final double? poids;
+  final List<String>? puissances;
+  final double? prixMin;
+  final double? prixMax;
 
   Equipement({
     required this.nom,
@@ -12,6 +18,10 @@ class Equipement {
     required this.profondeur,
     required this.hauteur,
     required this.largeur,
+    this.poids,
+    this.puissances,
+    this.prixMin,
+    this.prixMax,
   });
 }
 
@@ -30,6 +40,10 @@ class CatalogueService {
         profondeur: 240.0,
         hauteur: 270.0, 
         largeur: 798.0,
+        poids: 10.0,
+        puissances: ['1500 W (Multi-Split Uniquement)', '2000 W', '2500 W', '3400 W', '4200 W'],
+        prixMin: 823.0,
+        prixMax: 1238.0,
       ),
       Equipement(
         nom: 'Takao Plus Noir',
@@ -37,15 +51,21 @@ class CatalogueService {
         profondeur: 240.0,
         hauteur: 270.0,
         largeur: 798.0,
+        poids: 10.0,
+        puissances: ['1500 W (Multi-Split Uniquement)', '2000 W', '2500 W', '3400 W', '4200 W'],
+        prixMin: 906.0,
+        prixMax: 1361.0,
       )
     ],
     'Pompes à Chaleur': [
       Equipement(
-        nom: 'Takao Plus Unité Extérieure',
+        nom: 'Takao Unité Extérieure',
         chemin: 'assets/installations/unites_exterieures/unite_exterieure_takao_plus/unite_exterieure_takao_plus.png',
         profondeur: 290.0,
         hauteur: 542.0,
         largeur: 799.0,
+        prixMin: 1285.0,
+        prixMax: 2496.0,
       )
     ], 
     'Gaz & Fioul': [],
