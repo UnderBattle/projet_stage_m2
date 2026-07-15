@@ -73,7 +73,7 @@ class CalqueSimulation extends StatefulWidget {
     required this.lastHistoriqueDecalage,
     required this.onEquipementDropped,
     required this.onGoulotteCreated,
-    required this.onGoulotteEdited,
+    required this.onGoulotteEdited, VarianteEquipement? varianteSelectionnee,
   });
 
   @override

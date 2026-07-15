@@ -1,3 +1,22 @@
+// NOUVEAU : Structure de données stricte pour gérer les variantes de puissance et de dimensions
+class VarianteEquipement {
+  final String puissance;
+  final double profondeur;
+  final double hauteur;
+  final double largeur;
+  final double? poids;
+  final double? prix;
+
+  VarianteEquipement({
+    required this.puissance,
+    required this.profondeur,
+    required this.hauteur,
+    required this.largeur,
+    this.poids,
+    this.prix,
+  });
+}
+
 // Création d'un modèle de données strict
 class Equipement {
   final String nom;
@@ -12,6 +31,9 @@ class Equipement {
   final double? prixMin;
   final double? prixMax;
 
+  // NOUVEAU : Liste optionnelle de variantes géométriques et techniques
+  final List<VarianteEquipement>? variantes;
+
   Equipement({
     required this.nom,
     required this.chemin,
@@ -22,6 +44,7 @@ class Equipement {
     this.puissances,
     this.prixMin,
     this.prixMax,
+    this.variantes,
   });
 }
 
@@ -55,17 +78,64 @@ class CatalogueService {
         puissances: ['1500 W (Multi-Split Uniquement)', '2000 W', '2500 W', '3400 W', '4200 W'],
         prixMin: 906.0,
         prixMax: 1361.0,
-      )
-    ],
-    'Pompes à Chaleur': [
+      ),
       Equipement(
         nom: 'Takao Unité Extérieure',
-        chemin: 'assets/installations/unites_exterieures/unite_exterieure_takao_plus/unite_exterieure_takao_plus.png',
+        chemin: 'assets/installations/climatisations/unite_exterieure_takao/unite_exterieure_takao.png',
         profondeur: 290.0,
         hauteur: 542.0,
         largeur: 799.0,
         prixMin: 1285.0,
         prixMax: 2496.0,
+      )
+    ],
+    'Pompes à Chaleur': [
+      Equipement(
+        nom: 'Alféa Extensa A.I. R32',
+        chemin: 'assets/installations/pompe_a_chaleur/alfea_extensa_ai_r32/unité_intérieur_r32_service.png',
+        profondeur: 493.0,
+        hauteur: 847.0,
+        largeur: 450.0,
+        puissances: ['5 KW', '6 KW', '8 KW', '10 KW'],
+        prixMin: 6332.0,
+        prixMax: 9349.0,
+      ),
+      Equipement(
+        nom: 'Alféa Extensa A.I. Duo R32',
+        chemin: 'assets/installations/pompe_a_chaleur/alfea_extensa_ai_r32/unité_intérieur_r32_duo.png',
+        profondeur: 700.0,
+        hauteur: 1863.0,
+        largeur: 648.0,
+        puissances: ['3 KW', '5 KW', '6 KW', '8 KW', '10 KW'],
+        prixMin: 8073.0,
+        prixMax: 11505.0,
+      ),
+      Equipement(
+        nom: 'Alféa Extensa A.I. R32 Unité Extérieure',
+        chemin: 'assets/installations/pompe_a_chaleur/alfea_extensa_ai_r32/unité_exterieur_r32.png',
+        profondeur: 325.0, // Dimensions de base (Servent de secours)
+        hauteur: 632.0,
+        largeur: 886.0,
+        variantes: [
+          VarianteEquipement(
+            puissance: '3 KW - 6 KW',
+            profondeur: 325.0,
+            hauteur: 632.0,
+            largeur: 886.0,
+          ),
+          VarianteEquipement(
+            puissance: '8 KW',
+            profondeur: 349.0,
+            hauteur: 716.0,
+            largeur: 907.0,
+          ),
+          VarianteEquipement(
+            puissance: '10 KW',
+            profondeur: 372.0,
+            hauteur: 830.0,
+            largeur: 977.0,
+          )
+        ],
       )
     ], 
     'Gaz & Fioul': [],

@@ -35,6 +35,7 @@ class _EcranResultatState extends State<EcranResultat> {
   
   late String _categorieSelectionnee;
   Equipement? _modeleSelectionne;
+  VarianteEquipement? _varianteSelectionnee; // NOUVEAU : Conserve la variante exacte choisie
   
   bool _isProcessing = true;
   String _loadingMessage = "Analyse en cours...";
@@ -333,9 +334,10 @@ class _EcranResultatState extends State<EcranResultat> {
       final ByteData data = await DefaultAssetBundle.of(context).load(equipementPath);
       Uint8List equipementBytes = data.buffer.asUint8List();
       
-      double profondeur = _modeleSelectionne!.profondeur;
-      double hauteur = _modeleSelectionne!.hauteur;
-      double largeur = _modeleSelectionne!.largeur;
+      // NOUVEAU : On utilise en priorité les dimensions de la variante choisie
+      double profondeur = _varianteSelectionnee?.profondeur ?? _modeleSelectionne!.profondeur;
+      double hauteur = _varianteSelectionnee?.hauteur ?? _modeleSelectionne!.hauteur;
+      double largeur = _varianteSelectionnee?.largeur ?? _modeleSelectionne!.largeur;
 
       double ptHgXOrig = _pointsCibles![0]['x']! * (_imageWidth! / 1024.0);
       double ptHgYOrig = _pointsCibles![0]['y']! * (_imageHeight! / 1024.0);
@@ -633,7 +635,7 @@ class _EcranResultatState extends State<EcranResultat> {
       appBar: AppBar(
         title: const Text('Configuration du Devis'),
         actions: [
-          // Le bouton pour masquer/afficher les actions n'apparaît que si un équipement est sélectionné.
+          // Le bouton pour masquer/afficher les actions n'apparaît que si un équipement est sélectionné
           if (_modeleSelectionne != null)
             IconButton(
               icon: Icon(_interfaceVisible ? Icons.visibility : Icons.visibility_off),
@@ -738,6 +740,7 @@ class _EcranResultatState extends State<EcranResultat> {
                                       imageHeight: _imageHeight!,
                                       pointsCibles: _pointsCibles!,
                                       modeleSelectionne: _modeleSelectionne,
+                                      varianteSelectionnee: _varianteSelectionnee, // NOUVEAU : Transmission de la variante
                                       imageFondPropreBytes: _imageFondPropreBytes,
                                       imageFondAvecGoulotteBytes: _imageFondAvecGoulotteBytes,
                                       imageResultatBytes: _imageResultatBytes,
@@ -867,9 +870,11 @@ class _EcranResultatState extends State<EcranResultat> {
                 onCategorieChanged: (catName) {
                   setState(() => _categorieSelectionnee = catName);
                 },
-                onModeleSelected: (equipement) {
+                // NOUVEAU : Réception de la variante sélectionnée
+                onModeleSelected: (equipement, variante) {
                   setState(() {
                     _modeleSelectionne = equipement;
+                    _varianteSelectionnee = variante; 
                     _calqueEquipementPngBytes = null;
                     _dernierCalqueEquipementCompletBytes = null;
                     _historiqueRedoDecalages.clear();

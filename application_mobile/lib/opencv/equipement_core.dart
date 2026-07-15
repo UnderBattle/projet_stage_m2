@@ -3,7 +3,7 @@ import 'dart:math' as math;
 import 'package:opencv_dart/opencv_dart.dart' as cv;
 
 class EquipementCore {
-  /// Isolate pour générer l'équipement sur fond transparent (PNG).
+  /// Isolate pour gérer l'équipement sur fond transparent (PNG).
   static Future<Uint8List?> genererCalqueEquipementIsolate(Map<String, dynamic> params) async {
     return await genererCalqueEquipement(
       fondPropreBytes: params['fondPropreBytes'] as Uint8List,
@@ -19,7 +19,7 @@ class EquipementCore {
   }
 
   /// Calcule l'équipement, ses couleurs et ses ombres portées et renvoie le tout 
-  /// sous forme d'image PNG TRANSPARENTE prête à être superposée n'importe où !
+  /// sous forme d'image PNG TRANSPARENTE prête à être superposée n'importe où
   static Future<Uint8List?> genererCalqueEquipement({
     required Uint8List fondPropreBytes, 
     required Uint8List equipementBytes,
@@ -79,6 +79,7 @@ class EquipementCore {
       // =========================================================================
       cv.Point ptHg = ptsOri[0];
       cv.Point ptHd = ptsOri[1];
+
       double dx = (ptHd.x - ptHg.x).toDouble();
       double dy = (ptHd.y - ptHg.y).toDouble();
       double largeurPx = math.sqrt(dx * dx + dy * dy);
@@ -94,7 +95,6 @@ class EquipementCore {
       double uyBase = largeurPx * math.sin(angleRad);
       double vxBase = -hauteurPxBase * math.sin(angleRad);
       double vyBase = hauteurPxBase * math.cos(angleRad);
-
       double centreX = ptHg.x + (uxBase + vxBase) / 2.0;
       double centreY = ptHg.y + (uyBase + vyBase) / 2.0;
 
@@ -102,7 +102,6 @@ class EquipementCore {
 
       // Effet d'avancée optique (Zoom depuis le centre)
       double effetZoomProfondeur = 1.0 + (profondeurMm / 1000.0) * 0.60; 
-
       double largeurPxZoom = largeurPx * effetZoomProfondeur;
       double hauteurPxZoom = hauteurPxBase * effetZoomProfondeur;
 
@@ -135,9 +134,9 @@ class EquipementCore {
       // =========================================================================
       double hEquipementMm = hauteurMm;
       double wEquipementMm = largeurMm; 
+
       int wImgEquipement = equipementMat.cols;
       int hImgEquipement = equipementMat.rows;
-
       double wAutoPx = (wAutoMm / wEquipementMm) * wImgEquipement;
       double hAutoPx = (hAutoMm / hEquipementMm) * hImgEquipement;
 
@@ -155,15 +154,17 @@ class EquipementCore {
       cv.Mat equipementWarpedPad = cv.warpPerspective(equipementMat, hMatrixPad, (wPad, hPad));
 
       var channelsPad = cv.split(equipementWarpedPad);
-      cv.Mat alphaMaskOriginalePad = channelsPad[3]; 
+      cv.Mat alphaMaskOriginalePad = channelsPad[3];
+      
       cv.Mat alphaBinairePad = cv.threshold(alphaMaskOriginalePad, 127, 255, cv.THRESH_BINARY).$2;
       cv.Mat alphaErodePad = cv.erode(alphaBinairePad, cv.Mat.ones(3, 3, cv.MatType.CV_8UC1));
-      cv.Mat alphaMaskPad = cv.gaussianBlur(alphaErodePad, (3, 3), 0.0); 
+      cv.Mat alphaMaskPad = cv.gaussianBlur(alphaErodePad, (3, 3), 0.0);
+      
       cv.Mat equipementBgrPad = cv.cvtColor(equipementWarpedPad, cv.COLOR_BGRA2BGR);
       cv.Mat maskBinairePad = cv.threshold(alphaMaskPad, 5, 255, cv.THRESH_BINARY).$2;
 
       // =========================================================================
-      // === PHASE 3.5 : GÉNÉRATION DU VOLUME (PERSPECTIVE DYNAMIQUE POINT PAR POINT) =
+      // === PHASE 3.5 : GÉNÉRATION DU VOLUME (PERSPECTIVE DYNAMIQUE POINT PAR POINT) ===
       // =========================================================================
       var momentsPad = cv.moments(maskBinairePad);
       double eqCXPad = momentsPad.m10 / (momentsPad.m00 + 0.0001);
@@ -174,13 +175,11 @@ class EquipementCore {
 
       double distanceX = (eqCXPad - centrePhotoX).abs() / (wMur / 2.0);
       double distanceY = (eqCYPad - centrePhotoY).abs() / (hMur / 2.0);
-
       double attenuationX = (1.0 - distanceX).clamp(0.0, 1.0);
       double attenuationY = (1.0 - distanceY).clamp(0.0, 1.0);
 
       double ratioForme = hauteurMm / largeurMm;
       bool estClimMurale = ratioForme < 0.45;
-
       double forcePerspectiveBasse = estClimMurale ? 0.08 : 0.25; 
       double forcePerspectiveLaterale = estClimMurale ? 0.04 : 0.05; 
 
@@ -191,7 +190,7 @@ class EquipementCore {
       double imgCYPad = centrePhotoY + dynamicShiftY;
       
       double baseExtrusion = estClimMurale 
-          ? (profondeurMm / 1000.0) * 0.18  
+          ? (profondeurMm / 1000.0) * 0.18 
           : (profondeurMm / 1000.0) * 0.25; 
 
       cv.Mat sidesBgrPad = cv.Mat.zeros(hPad, wPad, cv.MatType.CV_8UC3);
@@ -205,13 +204,13 @@ class EquipementCore {
       // AMÉLIORATION RELIEF : Assombrissement asymétrique des faces latérales
       cv.Scalar colorTop = cv.Scalar(mB, mG, mR, 0);
       cv.Scalar colorBottom = estEquipementNoir 
-          ? cv.Scalar(math.min(255.0, mB + 50), math.min(255.0, mG + 50), math.min(255.0, mR + 50), 0) 
-          : cv.Scalar(mB * 0.67, mG * 0.67, mR * 0.67, 0); 
-          
+          ? cv.Scalar(math.min(255.0, mB + 50), math.min(255.0, mG + 50), math.min(255.0, mR + 50), 0)
+          : cv.Scalar(mB * 0.67, mG * 0.67, mR * 0.67, 0);
+            
       cv.Scalar colorLeft = estEquipementNoir 
           ? cv.Scalar(math.min(255.0, mB + 35), math.min(255.0, mG + 35), math.min(255.0, mR + 35), 0)
-          : cv.Scalar(mB * 0.85, mG * 0.85, mR * 0.85, 0);   
-          
+          : cv.Scalar(mB * 0.85, mG * 0.85, mR * 0.85, 0);
+            
       cv.Scalar colorRight = estEquipementNoir 
           ? cv.Scalar(math.min(255.0, mB + 20), math.min(255.0, mG + 20), math.min(255.0, mR + 20), 0)
           : cv.Scalar(mB * 0.85, mG * 0.85, mR * 0.85, 0);
@@ -230,9 +229,12 @@ class EquipementCore {
       );
       
       cv.Mat backMaskAlphaPad = cv.warpAffine(maskBinairePad, affineBackPad, (wPad, hPad));
-      cv.Mat backCapBgrPad = cv.Mat.zeros(hPad, wPad, cv.MatType.CV_8UC3)..setTo(colorBottom); 
+
+      cv.Mat backCapBgrPad = cv.Mat.zeros(hPad, wPad, cv.MatType.CV_8UC3)..setTo(colorBottom);
+      
       backCapBgrPad.copyTo(sidesBgrPad, mask: backMaskAlphaPad);
       cv.bitwiseOR(sidesAlphaPad, backMaskAlphaPad, dst: sidesAlphaPad);
+
       cv.Mat maskBinaireShrunkPad = cv.erode(maskBinairePad, cv.Mat.ones(5, 5, cv.MatType.CV_8UC1));
 
       var contoursResult = cv.findContours(maskBinaireShrunkPad, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_NONE);
@@ -281,7 +283,7 @@ class EquipementCore {
           }
 
           var quad = [p1, p2, p2Back, p1Back];
-          quadsAll.add(quad); 
+          quadsAll.add(quad);
 
           if (ny.abs() > nx.abs()) {
             if (ny < 0) {
@@ -299,10 +301,30 @@ class EquipementCore {
         }
       }
 
-      if (quadsTop.isNotEmpty) cv.fillPoly(sidesBgrPad, cv.VecVecPoint.fromList(quadsTop), colorTop, lineType: cv.LINE_AA);
-      if (quadsBottom.isNotEmpty) cv.fillPoly(sidesBgrPad, cv.VecVecPoint.fromList(quadsBottom), colorBottom, lineType: cv.LINE_AA);
-      if (quadsLeft.isNotEmpty) cv.fillPoly(sidesBgrPad, cv.VecVecPoint.fromList(quadsLeft), colorLeft, lineType: cv.LINE_AA);
-      if (quadsRight.isNotEmpty) cv.fillPoly(sidesBgrPad, cv.VecVecPoint.fromList(quadsRight), colorRight, lineType: cv.LINE_AA);
+      // NOUVEAU : L'Algorithme du Peintre Dynamique
+      // L'ordre de rendu s'adapte à la position Y de l'équipement par rapport au centre de la pièce (imgCYPad).
+      double seuilMilieu = hMur * 0.10; // Zone du milieu définie par une marge de tolérance (10% de l'image)
+      double diffY = eqCYPad - imgCYPad;
+
+      if (diffY > seuilMilieu) {
+        // Équipement en BAS : Le bas est écrasé par les côtés (dessiné en premier), le haut écrase les côtés (dessiné en dernier car visible)
+        if (quadsBottom.isNotEmpty) cv.fillPoly(sidesBgrPad, cv.VecVecPoint.fromList(quadsBottom), colorBottom, lineType: cv.LINE_AA);
+        if (quadsLeft.isNotEmpty) cv.fillPoly(sidesBgrPad, cv.VecVecPoint.fromList(quadsLeft), colorLeft, lineType: cv.LINE_AA);
+        if (quadsRight.isNotEmpty) cv.fillPoly(sidesBgrPad, cv.VecVecPoint.fromList(quadsRight), colorRight, lineType: cv.LINE_AA);
+        if (quadsTop.isNotEmpty) cv.fillPoly(sidesBgrPad, cv.VecVecPoint.fromList(quadsTop), colorTop, lineType: cv.LINE_AA);
+      } else if (diffY < -seuilMilieu) {
+        // Équipement en HAUT : Le haut est écrasé par les côtés (dessiné en premier), le bas écrase les côtés (dessiné en dernier car visible)
+        if (quadsTop.isNotEmpty) cv.fillPoly(sidesBgrPad, cv.VecVecPoint.fromList(quadsTop), colorTop, lineType: cv.LINE_AA);
+        if (quadsLeft.isNotEmpty) cv.fillPoly(sidesBgrPad, cv.VecVecPoint.fromList(quadsLeft), colorLeft, lineType: cv.LINE_AA);
+        if (quadsRight.isNotEmpty) cv.fillPoly(sidesBgrPad, cv.VecVecPoint.fromList(quadsRight), colorRight, lineType: cv.LINE_AA);
+        if (quadsBottom.isNotEmpty) cv.fillPoly(sidesBgrPad, cv.VecVecPoint.fromList(quadsBottom), colorBottom, lineType: cv.LINE_AA);
+      } else {
+        // Équipement au MILIEU : Les côtés écrasent le haut et le bas
+        if (quadsTop.isNotEmpty) cv.fillPoly(sidesBgrPad, cv.VecVecPoint.fromList(quadsTop), colorTop, lineType: cv.LINE_AA);
+        if (quadsBottom.isNotEmpty) cv.fillPoly(sidesBgrPad, cv.VecVecPoint.fromList(quadsBottom), colorBottom, lineType: cv.LINE_AA);
+        if (quadsLeft.isNotEmpty) cv.fillPoly(sidesBgrPad, cv.VecVecPoint.fromList(quadsLeft), colorLeft, lineType: cv.LINE_AA);
+        if (quadsRight.isNotEmpty) cv.fillPoly(sidesBgrPad, cv.VecVecPoint.fromList(quadsRight), colorRight, lineType: cv.LINE_AA);
+      }
       
       if (quadsAll.isNotEmpty) cv.fillPoly(sidesAlphaPad, cv.VecVecPoint.fromList(quadsAll), cv.Scalar.all(255), lineType: cv.LINE_AA);
 
@@ -327,7 +349,6 @@ class EquipementCore {
       // CORRECTION 1 : Détruire la texture (bois, saletés) avant de calculer le contraste
       // En appliquant un flou moyen avant l'écart-type, on ignore les petits détails granuleux
       cv.Mat grayMurSansTexture = cv.gaussianBlur(grayMurSmall, (5, 5), 0.0);
-
       var meanStdDev = cv.meanStdDev(grayMurSansTexture);
       double ecartTypeMur = meanStdDev.$2.val[0]; 
 
@@ -339,15 +360,17 @@ class EquipementCore {
       // CORRECTION 2 : Flou massif pour le calcul directionnel (Sobel)
       // Un flou de 15x15 sur une miniature détruit TOUTES les aspérités (tâches, noeuds de bois)
       cv.Mat grayMurFlou = cv.gaussianBlur(grayMurSmall, (15, 15), 0.0);
+
       cv.Mat sobelX = cv.sobel(grayMurFlou, cv.MatType.CV_32F, 1, 0, ksize: 3);
       cv.Mat sobelY = cv.sobel(grayMurFlou, cv.MatType.CV_32F, 0, 1, ksize: 3);
 
       cv.Scalar meanSobelX = cv.mean(sobelX, mask: maskBinaireSmall);
       cv.Scalar meanSobelY = cv.mean(sobelY, mask: maskBinaireSmall);
+
       double gradX = meanSobelX.val[0];
       double gradY = meanSobelY.val[0];
-      double norme = math.sqrt(gradX * gradX + gradY * gradY) + 0.0001; 
 
+      double norme = math.sqrt(gradX * gradX + gradY * gradY) + 0.0001; 
       double dirLumiereX = gradX / norme;
       double dirLumiereY = gradY / norme;
 
@@ -360,9 +383,11 @@ class EquipementCore {
 
       var srcPts = cv.VecPoint.fromList([cv.Point(0, 0), cv.Point(10, 0), cv.Point(0, 10)]);
       var dstPtsDir = cv.VecPoint.fromList([cv.Point(shiftX.toInt(), shiftY.toInt()), cv.Point(10 + shiftX.toInt(), shiftY.toInt()), cv.Point(shiftX.toInt(), 10 + shiftY.toInt())]);
+      
       cv.Mat affineMatDir = cv.getAffineTransform(srcPts, dstPtsDir);
       
       cv.Mat alphaOmbrePad = cv.warpAffine(alphaMaskTotalPad, affineMatDir, (wPad, hPad));
+
       cv.Mat smallAlphaPad = cv.resize(alphaOmbrePad, (wPad ~/ 4, hPad ~/ 4));
       
       int baseBlur = (5 + (ratioVolume * 4) + ((1.0 - ratioContraste) * 8)).toInt();
@@ -399,9 +424,10 @@ class EquipementCore {
       // =========================================================================
       final double reglageMixAmbiancePiece = 0.65;
       final double reglageMixCouleurMur = 0.35;    
+
       final double reglageTeinteEquipementBlanc = 0.30;
-      final double reglageTeinteEquipementNoir = 0.08;   
-      
+      final double reglageTeinteEquipementNoir = 0.08;      
+
       final double reglageInfluenceOmbreSurBlanc = 0.65;
       final double reglageInfluenceOmbreSurNoir = 0.21;  
 
@@ -417,6 +443,7 @@ class EquipementCore {
 
       // On restaure le ratio d'origine (0.7) qui donnait la bonne luminosité
       double ratioLuminositeAmbiante = (lumMurLocal / 128.0).clamp(0.7, 1.0);
+
       final double reglageLuminositeEquipementBlanc = 0.95 * ratioLuminositeAmbiante; 
       final double reglageLuminositeEquipementNoir = 0.78;
 
@@ -434,27 +461,26 @@ class EquipementCore {
       tintR = math.max(0.80, math.min(1.20, tintR));
 
       var equipementChannels = cv.split(equipementBgr);
-
       cv.Mat bTinted = equipementChannels[0].convertTo(cv.MatType.CV_8UC1, alpha: tintB);
       cv.Mat gTinted = equipementChannels[1].convertTo(cv.MatType.CV_8UC1, alpha: tintG);
       cv.Mat rTinted = equipementChannels[2].convertTo(cv.MatType.CV_8UC1, alpha: tintR);
       cv.Mat equipementTinted = cv.merge(cv.VecMat.fromList([bTinted, gTinted, rTinted]));
+
       cv.Mat equipementHsv = cv.cvtColor(equipementTinted, cv.COLOR_BGR2HSV);
-
       var hsvChannels = cv.split(equipementHsv);
-
+      
       cv.Mat grayLisse = cv.resize(grayMurFlou, (wMur, hMur), interpolation: cv.INTER_CUBIC);
-
       cv.Scalar meanEquipementV = cv.mean(hsvChannels[2], mask: maskTotalVolume);
-
+      
       // On restaure le calcul original de la luminosité (denominateurLuma) qui empêchait la clim de devenir trop brillante
       double lumaEquipementNativeHSV = math.max(meanEquipementV.val[0], 1.0);
       double denominateurLuma = estEquipementNoir ? math.max(lumaEquipementNativeHSV, 130.0) : lumaEquipementNativeHSV;
       
       double influenceMur = estEquipementNoir ? reglageInfluenceOmbreSurNoir : reglageInfluenceOmbreSurBlanc; 
       double influenceEquipement = 1.0 - influenceMur;
-
+      
       cv.Mat ratioSecurise = grayLisse.convertTo(cv.MatType.CV_32FC1, alpha: influenceMur / denominateurLuma, beta: influenceEquipement);
+      
       cv.Mat vChannelF = hsvChannels[2].convertTo(cv.MatType.CV_32FC1);
       cv.Mat vShadowedF = cv.multiply(vChannelF, ratioSecurise);
 
@@ -487,6 +513,7 @@ class EquipementCore {
       // === PHASE 5.5 : DEGRADATION REALISTE (CAPTEUR PHOTO) ===
       // =========================================================================
       cv.Mat equipementBrouillee = cv.gaussianBlur(equipementRgbFinalPropre, (3, 3), 0.6);
+      
       cv.Mat noise = cv.Mat.zeros(hMur, wMur, cv.MatType.CV_8UC3);
       cv.randn(noise, cv.Scalar.all(128.0), cv.Scalar.all(8.0)); 
       
@@ -500,6 +527,7 @@ class EquipementCore {
       
       // Le paramètre "scale" de multiply remplace la conversion matricielle de division
       cv.Mat shadowAlpha = cv.multiply(invAlphaMask, ombreTotale, scale: 1.0 / 255.0);
+      
       cv.Mat finalAlpha8u = cv.add(alphaMaskTotal, shadowAlpha);
 
       cv.Mat bgrFinal = cv.Mat.zeros(hMur, wMur, cv.MatType.CV_8UC3);
@@ -508,6 +536,7 @@ class EquipementCore {
       cv.Mat bgraFinal = cv.cvtColor(bgrFinal, cv.COLOR_BGR2BGRA);
       var bgraChannels = cv.split(bgraFinal);
       bgraChannels[3] = finalAlpha8u; 
+      
       cv.Mat finalImage = cv.merge(bgraChannels);
 
       var encodeResult = cv.imencode('.png', finalImage, params: cv.VecI32.fromList([16, 0]));

@@ -6,7 +6,9 @@ class CatalogueDevis extends StatelessWidget {
   final Equipement? modeleSelectionne;
   final bool isProcessing;
   final ValueChanged<String> onCategorieChanged;
-  final ValueChanged<Equipement> onModeleSelected;
+  
+  // NOUVEAU : Le callback renvoie l'équipement ET sa variante si elle existe
+  final Function(Equipement, VarianteEquipement?) onModeleSelected;
 
   const CatalogueDevis({
     super.key,
@@ -16,6 +18,39 @@ class CatalogueDevis extends StatelessWidget {
     required this.onCategorieChanged,
     required this.onModeleSelected,
   });
+
+  // NOUVEAU : Affiche une popup épurée pour choisir la taille exacte
+  void _afficherPopupVariantes(BuildContext context, Equipement equipement, ThemeData theme) {
+    showDialog(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          backgroundColor: theme.cardColor,
+          title: Text("Choisir la puissance", style: TextStyle(color: theme.colorScheme.onSurface, fontWeight: FontWeight.bold)),
+          content: SizedBox(
+            width: double.maxFinite,
+            child: ListView.builder(
+              shrinkWrap: true,
+              itemCount: equipement.variantes!.length,
+              itemBuilder: (context, index) {
+                final variante = equipement.variantes![index];
+                return ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: Text(variante.puissance, style: TextStyle(fontWeight: FontWeight.bold, color: theme.colorScheme.primary)),
+                  subtitle: Text("${variante.hauteur} x ${variante.largeur} x ${variante.profondeur} mm", style: TextStyle(color: theme.colorScheme.onSurface.withValues(alpha: 0.6))),
+                  trailing: Icon(Icons.chevron_right, color: theme.colorScheme.primary),
+                  onTap: () {
+                    Navigator.pop(context);
+                    onModeleSelected(equipement, variante);
+                  },
+                );
+              },
+            ),
+          ),
+        );
+      }
+    );
+  }
 
   // Méthode pour afficher le panneau d'informations techniques
   void _afficherInfosEquipement(BuildContext context, Equipement equipement, ThemeData theme) {
@@ -56,7 +91,22 @@ class CatalogueDevis extends StatelessWidget {
               const SizedBox(height: 16),
               
               // Informations techniques adaptatives (ne s'affichent que si elles existent)
-              _buildInfoRow(Icons.straighten, "Dimensions (H x L x P)", "${equipement.hauteur} x ${equipement.largeur} x ${equipement.profondeur} mm", theme),
+              
+              // Affichage intelligent des dimensions (Globale OU par variante)
+              if (equipement.variantes != null && equipement.variantes!.isNotEmpty) ...[
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 8.0),
+                  child: Text("Dimensions selon la puissance :", style: TextStyle(fontWeight: FontWeight.w600, color: theme.colorScheme.onSurface.withValues(alpha: 0.6))),
+                ),
+                ...equipement.variantes!.map((v) => _buildInfoRow(
+                  Icons.straighten, 
+                  v.puissance, 
+                  "${v.hauteur} x ${v.largeur} x ${v.profondeur} mm", 
+                  theme
+                )),
+              ] else ...[
+                _buildInfoRow(Icons.straighten, "Dimensions (H x L x P)", "${equipement.hauteur} x ${equipement.largeur} x ${equipement.profondeur} mm", theme),
+              ],
               
               if (equipement.poids != null)
                 _buildInfoRow(Icons.scale, "Poids", "${equipement.poids} kg", theme),
@@ -65,7 +115,7 @@ class CatalogueDevis extends StatelessWidget {
                 _buildInfoRow(Icons.bolt, "Puissances disponibles", equipement.puissances!.join('\n'), theme),
                 
               if (equipement.prixMin != null && equipement.prixMax != null)
-                _buildInfoRow(Icons.euro, "Fourchette de prix public", "${equipement.prixMin!.toStringAsFixed(0)} €  -  ${equipement.prixMax!.toStringAsFixed(0)} €", theme),
+                _buildInfoRow(Icons.euro, "Fourchette de prix public", "${equipement.prixMin!.toStringAsFixed(0)} €  —  ${equipement.prixMax!.toStringAsFixed(0)} €", theme),
                 
               const SizedBox(height: 10),
             ],
@@ -150,7 +200,6 @@ class CatalogueDevis extends StatelessWidget {
                     showCheckmark: false, // Plus propre sans le V de validation
                     onSelected: (bool selected) {
                       if (selected && !isProcessing) {
-
                         // =========================================================================
                         // === OPTIMISATION RAM : Nettoyage dynamique du cache vidéo             ===
                         // =========================================================================
@@ -200,7 +249,13 @@ class CatalogueDevis extends StatelessWidget {
                       return GestureDetector(
                         onTap: () {
                           if (isProcessing) return;
-                          onModeleSelected(equipement);
+                          
+                          // VÉRIFICATION DES VARIANTES AVANT L'INCRUSTATION
+                          if (equipement.variantes != null && equipement.variantes!.isNotEmpty) {
+                            _afficherPopupVariantes(context, equipement, theme);
+                          } else {
+                            onModeleSelected(equipement, null);
+                          }
                         },
                         child: AnimatedContainer(
                           duration: const Duration(milliseconds: 200),
