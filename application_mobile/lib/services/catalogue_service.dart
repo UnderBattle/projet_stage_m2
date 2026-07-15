@@ -1,6 +1,7 @@
-// NOUVEAU : Structure de données stricte pour gérer les variantes de puissance et de dimensions
+/// Structure de données stricte pour gérer les variantes d'un équipement.
 class VarianteEquipement {
-  final String puissance;
+  final String valeur;
+  final String? chemin;
   final double profondeur;
   final double hauteur;
   final double largeur;
@@ -8,7 +9,8 @@ class VarianteEquipement {
   final double? prix;
 
   VarianteEquipement({
-    required this.puissance,
+    required this.valeur,
+    this.chemin,
     required this.profondeur,
     required this.hauteur,
     required this.largeur,
@@ -57,27 +59,34 @@ class CatalogueService {
   // Le catalogue est typé et protégé
   final Map<String, List<Equipement>> catalogueGlobal = {
     'Climatisations': [
-      Equipement(
-        nom: 'Takao Plus Blanc',
+       Equipement(
+        nom: 'Takao Plus',
         chemin: 'assets/installations/climatisations/clim_takao_plus/8e74c5374539-takao-plus-blanc-face-atlantic.png',
         profondeur: 240.0,
         hauteur: 270.0, 
         largeur: 798.0,
         poids: 10.0,
-        puissances: ['1500 W (Multi-Split Uniquement)', '2000 W', '2500 W', '3400 W', '4200 W'],
+        puissances: ['1500 W (Multi-Split Uniquement)', '2000 W', '2500 W', '3400 W', '4200 W'], 
         prixMin: 823.0,
-        prixMax: 1238.0,
-      ),
-      Equipement(
-        nom: 'Takao Plus Noir',
-        chemin: 'assets/installations/climatisations/clim_takao_plus/baae79054b9d-takao-plus-noir-face-atlantic.png',
-        profondeur: 240.0,
-        hauteur: 270.0,
-        largeur: 798.0,
-        poids: 10.0,
-        puissances: ['1500 W (Multi-Split Uniquement)', '2000 W', '2500 W', '3400 W', '4200 W'],
-        prixMin: 906.0,
         prixMax: 1361.0,
+        variantes: [
+          VarianteEquipement(
+            valeur: 'Blanc', 
+            chemin: 'assets/installations/climatisations/clim_takao_plus/8e74c5374539-takao-plus-blanc-face-atlantic.png',
+            profondeur: 240.0,
+            hauteur: 270.0,
+            largeur: 798.0,
+            poids: 10.0
+          ),
+          VarianteEquipement(
+            valeur: 'Noir', 
+            chemin: 'assets/installations/climatisations/clim_takao_plus/baae79054b9d-takao-plus-noir-face-atlantic.png',
+            profondeur: 240.0,
+            hauteur: 270.0,
+            largeur: 798.0,
+            poids: 10.0,
+          )
+        ],
       ),
       Equipement(
         nom: 'Takao Unité Extérieure',
@@ -113,24 +122,24 @@ class CatalogueService {
       Equipement(
         nom: 'Alféa Extensa A.I. R32 Unité Extérieure',
         chemin: 'assets/installations/pompe_a_chaleur/alfea_extensa_ai_r32/unité_exterieur_r32.png',
-        profondeur: 325.0, // Dimensions de base (Servent de secours)
+        profondeur: 325.0,
         hauteur: 632.0,
         largeur: 886.0,
         variantes: [
           VarianteEquipement(
-            puissance: '3 KW - 6 KW',
+            valeur: '3 KW - 6 KW',
             profondeur: 325.0,
             hauteur: 632.0,
             largeur: 886.0,
           ),
           VarianteEquipement(
-            puissance: '8 KW',
+            valeur: '8 KW',
             profondeur: 349.0,
             hauteur: 716.0,
             largeur: 907.0,
           ),
           VarianteEquipement(
-            puissance: '10 KW',
+            valeur: '10 KW',
             profondeur: 372.0,
             hauteur: 830.0,
             largeur: 977.0,
@@ -139,6 +148,55 @@ class CatalogueService {
       )
     ], 
     'Gaz & Fioul': [],
-    'Thermodynamique': []
+    'Thermodynamique': [
+      Equipement(
+        nom: 'Calypso Mural',
+        chemin: 'assets/installations/thermodynamique/calypso/calypso_mural_100l.png', 
+        profondeur: 590.0,
+        hauteur: 1060.0,
+        largeur: 590.0,
+        poids: 57.0,
+        variantes: [
+          VarianteEquipement(
+            valeur: '100L',
+            chemin: 'assets/installations/thermodynamique/calypso/calypso_mural_100l.png',
+            profondeur: 590.0,
+            hauteur: 1060.0,
+            largeur: 590.0,
+          ),
+          VarianteEquipement(
+            valeur: '150L',
+            chemin: 'assets/installations/thermodynamique/calypso/calypso_mural_150l.png',
+            profondeur: 590.0,
+            hauteur: 1310.0,
+            largeur: 590.0,
+          )
+        ]
+      ),
+      Equipement(
+        nom: 'Calypso Vertical sur Socle',
+        chemin: 'assets/installations/thermodynamique/calypso/calypso_socle_200l.png', 
+        profondeur: 600.0,
+        hauteur: 1710.0,
+        largeur: 650.0,
+        poids: 75.0,
+        variantes: [
+          VarianteEquipement(
+            valeur: '200L',
+            chemin: 'assets/installations/thermodynamique/calypso/calypso_socle_200l.png',
+            profondeur: 600.0,
+            hauteur: 1710.0,
+            largeur: 650.0,
+          ),
+          VarianteEquipement(
+            valeur: '240L',
+            chemin: 'assets/installations/thermodynamique/calypso/calypso_socle_240l.png',
+            profondeur: 600.0,
+            hauteur: 1900.0,
+            largeur: 650.0,
+          )
+        ]
+      )
+    ]
   };
 }

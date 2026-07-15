@@ -6,8 +6,7 @@ class CatalogueDevis extends StatelessWidget {
   final Equipement? modeleSelectionne;
   final bool isProcessing;
   final ValueChanged<String> onCategorieChanged;
-  
-  // NOUVEAU : Le callback renvoie l'équipement ET sa variante si elle existe
+
   final Function(Equipement, VarianteEquipement?) onModeleSelected;
 
   const CatalogueDevis({
@@ -19,14 +18,13 @@ class CatalogueDevis extends StatelessWidget {
     required this.onModeleSelected,
   });
 
-  // NOUVEAU : Affiche une popup épurée pour choisir la taille exacte
   void _afficherPopupVariantes(BuildContext context, Equipement equipement, ThemeData theme) {
     showDialog(
       context: context,
       builder: (context) {
         return AlertDialog(
           backgroundColor: theme.cardColor,
-          title: Text("Choisir la puissance", style: TextStyle(color: theme.colorScheme.onSurface, fontWeight: FontWeight.bold)),
+          title: Text("Choisir une variante", style: TextStyle(color: theme.colorScheme.onSurface, fontWeight: FontWeight.bold)),
           content: SizedBox(
             width: double.maxFinite,
             child: ListView.builder(
@@ -36,7 +34,7 @@ class CatalogueDevis extends StatelessWidget {
                 final variante = equipement.variantes![index];
                 return ListTile(
                   contentPadding: EdgeInsets.zero,
-                  title: Text(variante.puissance, style: TextStyle(fontWeight: FontWeight.bold, color: theme.colorScheme.primary)),
+                  title: Text(variante.valeur, style: TextStyle(fontWeight: FontWeight.bold, color: theme.colorScheme.primary)),
                   subtitle: Text("${variante.hauteur} x ${variante.largeur} x ${variante.profondeur} mm", style: TextStyle(color: theme.colorScheme.onSurface.withValues(alpha: 0.6))),
                   trailing: Icon(Icons.chevron_right, color: theme.colorScheme.primary),
                   onTap: () {
@@ -96,11 +94,11 @@ class CatalogueDevis extends StatelessWidget {
               if (equipement.variantes != null && equipement.variantes!.isNotEmpty) ...[
                 Padding(
                   padding: const EdgeInsets.only(bottom: 8.0),
-                  child: Text("Dimensions selon la puissance :", style: TextStyle(fontWeight: FontWeight.w600, color: theme.colorScheme.onSurface.withValues(alpha: 0.6))),
+                  child: Text("Dimensions par variante :", style: TextStyle(fontWeight: FontWeight.w600, color: theme.colorScheme.onSurface.withValues(alpha: 0.6))),
                 ),
                 ...equipement.variantes!.map((v) => _buildInfoRow(
                   Icons.straighten, 
-                  v.puissance, 
+                  v.valeur, 
                   "${v.hauteur} x ${v.largeur} x ${v.profondeur} mm", 
                   theme
                 )),
@@ -277,25 +275,28 @@ class CatalogueDevis extends StatelessWidget {
                           // Stack utilisé pour superposer le bouton 'i' sur la carte
                           child: Stack(
                             children: [
-                              // Le contenu normal de la carte
-                              Column(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: [
-                                  Expanded(child: Padding(padding: const EdgeInsets.all(8.0), child: Image.asset(equipement.chemin, fit: BoxFit.contain))),
-                                  Padding(
-                                    padding: const EdgeInsets.symmetric(horizontal: 4.0, vertical: 8.0),
-                                    child: Text(
-                                      equipement.nom, 
-                                      style: TextStyle(
-                                        fontSize: 12, 
-                                        fontWeight: isSelected ? FontWeight.bold : FontWeight.w500, 
-                                        color: isSelected ? theme.colorScheme.primary : theme.colorScheme.onSurface
-                                      ), 
-                                      textAlign: TextAlign.center, 
-                                      maxLines: 2
+                              Center(
+                                child: Column(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  crossAxisAlignment: CrossAxisAlignment.center,
+                                  children: [
+                                    Expanded(child: Padding(padding: const EdgeInsets.all(8.0), child: Image.asset(equipement.chemin, fit: BoxFit.contain))),
+                                    Padding(
+                                      padding: const EdgeInsets.symmetric(horizontal: 4.0, vertical: 8.0),
+                                      child: Text(
+                                        equipement.nom, 
+                                        style: TextStyle(
+                                          fontSize: 12, 
+                                          fontWeight: isSelected ? FontWeight.bold : FontWeight.w500, 
+                                          color: isSelected ? theme.colorScheme.primary : theme.colorScheme.onSurface
+                                        ), 
+                                        textAlign: TextAlign.center, 
+                                        maxLines: 2,
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
                                     ),
-                                  ),
-                                ],
+                                  ],
+                                ),
                               ),
                               
                               // Bouton 'Info' (i) en haut à droite

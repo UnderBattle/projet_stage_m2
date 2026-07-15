@@ -330,7 +330,8 @@ class _EcranResultatState extends State<EcranResultat> {
     });
 
     try {
-      String equipementPath = _modeleSelectionne!.chemin;
+      // On utilise le chemin de la variante si elle en a un, sinon on prend celui de l'équipement parent
+      String equipementPath = _varianteSelectionnee?.chemin ?? _modeleSelectionne!.chemin;
       final ByteData data = await DefaultAssetBundle.of(context).load(equipementPath);
       Uint8List equipementBytes = data.buffer.asUint8List();
       

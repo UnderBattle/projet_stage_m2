@@ -71,6 +71,7 @@ flutter:
     - assets/lama_dynamic_45mo.tflite
     - assets/installations/climatisations/clim_takao_plus/
     - assets/installations/climatisations/unite_exterieure_takao/
+    - assets/installations/thermodynamique/calypso/
     - assets/installations/pompe_a_chaleur/alfea_extensa_ai_r32/
 
   # To add assets to your application, add an assets section, like this:
