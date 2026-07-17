@@ -96,6 +96,50 @@ class CatalogueService {
         largeur: 799.0,
         prixMin: 1285.0,
         prixMax: 2496.0,
+      ),
+      Equipement(
+        nom: 'Murao Smart',
+        chemin: 'assets/installations/climatisations/murao/murao_smart.png',
+        profondeur: 193.0,
+        hauteur: 265.0, 
+        largeur: 705.0,
+        poids: 6.7,
+        puissances: ['2100 W', '2700 W', '3600 W', '4200 W', '5300 W'], 
+        prixMin: 461.0,
+        prixMax: 842.0,
+        variantes: [
+          VarianteEquipement(
+            valeur: '2100 W', 
+            chemin: 'assets/installations/climatisations/murao/murao_smart.png',
+            profondeur: 193.0,
+            hauteur: 265.0,
+            largeur: 705.0,
+            poids: 6.7
+          ),
+          VarianteEquipement(
+            valeur: '2700 W et 3600 W', 
+            chemin: 'assets/installations/climatisations/murao/murao_smart.png',
+            profondeur: 292.0,
+            hauteur: 200.0,
+            largeur: 805.0,
+            poids: 8.1
+          ),
+          VarianteEquipement(
+            valeur: '4200 W et 5300 W', 
+            chemin: 'assets/installations/climatisations/murao/murao_smart.png',
+            profondeur: 220.0,
+            hauteur: 318.0,
+            largeur: 975.0,
+            poids: 12.0
+          )
+        ],
+      ),
+      Equipement(
+        nom: 'Murao Smart Unité Extérieure',
+        chemin: 'assets/installations/climatisations/unite_exterieure_murao/unite_exterieure_murao_smart.png',
+        profondeur: 280.0,
+        hauteur: 553.0,
+        largeur: 800.0,
       )
     ],
     'Pompes à Chaleur': [
@@ -147,7 +191,28 @@ class CatalogueService {
         ],
       )
     ], 
-    'Gaz & Fioul': [],
+    'Gaz & Fioul': [
+      Equipement(
+        nom: 'Naema 3',
+        chemin: 'assets/installations/gaz_et_fioul/naema3/naema3.png',
+        profondeur: 400.0,
+        hauteur: 714.0,
+        largeur: 310.0,
+        puissances: ['12 KW', '20 KW', '25 KW (Micro)', '30 KW', '30 KW (Micro)', '35 KW (Micro)'],
+        prixMin: 3296.0,
+        prixMax: 4346.0,
+      ),
+      Equipement(
+        nom: 'Naema 3 Duo',
+        chemin: 'assets/installations/gaz_et_fioul/naema3/naema3_duo.png',
+        profondeur: 489.0,
+        hauteur: 935.0,
+        largeur: 600.0,
+        puissances: ['25 KW', '35 KW'],
+        prixMin: 5092.0,
+        prixMax: 6188.0,
+      )
+    ],
     'Thermodynamique': [
       Equipement(
         nom: 'Calypso Mural',
